@@ -1,3 +1,5 @@
+const APP_VERSION = "v19";
+
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
   paper: "종이",
@@ -60,8 +62,8 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v1";
-const CLASS_KEY = "recycle-class-names-fast-v1";
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v19";
+const CLASS_KEY = "recycle-class-names-fast-v19";
 
 const MAX_IMAGES_PER_ZIP = 20;
 const TRAIN_EPOCHS = 6;
@@ -110,6 +112,25 @@ const els = {
   zipInput: $("zipInput"),
   trainSelectedBtn: $("trainSelectedBtn")
 };
+
+function applyVersionLabel() {
+  document.title = `스마트 재활용 분류 시스템 ${APP_VERSION}`;
+
+  const brandText = document.querySelector(".brand p");
+  if (brandText && !brandText.textContent.includes(APP_VERSION)) {
+    brandText.textContent = `${brandText.textContent} · ${APP_VERSION}`;
+  }
+
+  const eyebrow = document.querySelector(".eyebrow");
+  if (eyebrow && !eyebrow.textContent.includes(APP_VERSION)) {
+    eyebrow.textContent = `${eyebrow.textContent} · ${APP_VERSION}`;
+  }
+
+  const supportCard = document.querySelector(".support-card span");
+  if (supportCard && !supportCard.textContent.includes(APP_VERSION)) {
+    supportCard.textContent = `${supportCard.textContent} · ${APP_VERSION}`;
+  }
+}
 
 function log(message) {
   if (!els.trainLog) return;
@@ -285,6 +306,22 @@ async function getZipNames() {
   return DEFAULT_ZIP_FILES;
 }
 
+function looksLikeZip(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 4) return false;
+
+  const bytes = new Uint8Array(arrayBuffer.slice(0, 4));
+
+  return (
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    (
+      (bytes[2] === 0x03 && bytes[3] === 0x04) ||
+      (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+      (bytes[2] === 0x07 && bytes[3] === 0x08)
+    )
+  );
+}
+
 async function loadZipFilesFromRepo() {
   const zipNames = await getZipNames();
   const files = [];
@@ -314,14 +351,23 @@ async function loadZipFilesFromRepo() {
 
     try {
       const result = await fetchFirstAvailable(candidatePaths);
-      const blob = await result.res.blob();
+      const buffer = await result.res.arrayBuffer();
+
+      if (!looksLikeZip(buffer)) {
+        skipped.push(cleanName);
+        log(`  건너뜀: ${result.path} 파일이 정상 ZIP 형식이 아닙니다.`);
+        await tf.nextFrame();
+        continue;
+      }
+
+      const blob = new Blob([buffer], { type: "application/zip" });
 
       files.push(new File([blob], cleanName, { type: "application/zip" }));
 
       log(`  불러옴: ${result.path}`);
     } catch (err) {
       skipped.push(cleanName);
-      log(`  건너뜀: ${cleanName} 파일을 찾을 수 없습니다.`);
+      log(`  건너뜀: ${cleanName} 파일을 찾을 수 없거나 불러올 수 없습니다.`);
     }
 
     await tf.nextFrame();
@@ -329,16 +375,16 @@ async function loadZipFilesFromRepo() {
 
   if (skipped.length > 0) {
     log("");
-    log("누락되어 건너뛴 ZIP 파일:");
+    log("누락 또는 손상으로 건너뛴 ZIP 파일:");
     skipped.forEach(name => log(`  - ${name}`));
     log("");
   }
 
   if (!files.length) {
-    throw new Error("불러올 수 있는 ZIP 파일이 없습니다. 저장소에 학습용 ZIP 파일이 있는지 확인하세요.");
+    throw new Error("불러올 수 있는 정상 ZIP 파일이 없습니다. 저장소에 학습용 ZIP 파일이 있는지 확인하세요.");
   }
 
-  log(`사용 가능한 ZIP ${files.length}개로 학습을 진행합니다.`);
+  log(`사용 가능한 정상 ZIP ${files.length}개로 학습을 진행합니다.`);
 
   return files;
 }
@@ -393,7 +439,14 @@ function getEmbedding(image) {
 }
 
 async function readZipFile(file, sourceName) {
-  const zip = await JSZip.loadAsync(file);
+  let zip;
+
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch (err) {
+    log(`  건너뜀: ${sourceName} 압축을 해제할 수 없습니다.`);
+    return [];
+  }
 
   const materialClass = detectClass(sourceName, MATERIAL_KEYWORDS, "unknown");
   const contaminationClass = detectClass(sourceName, CONTAMINATION_KEYWORDS, "uncertain");
@@ -401,6 +454,11 @@ async function readZipFile(file, sourceName) {
   let entries = Object.values(zip.files).filter(entry => {
     return !entry.dir && isImageFile(entry.name);
   });
+
+  if (!entries.length) {
+    log(`  건너뜀: ${sourceName} 안에 이미지가 없습니다.`);
+    return [];
+  }
 
   if (entries.length > MAX_IMAGES_PER_ZIP) {
     const sampled = [];
@@ -416,15 +474,19 @@ async function readZipFile(file, sourceName) {
   const samples = [];
 
   for (const entry of entries) {
-    const blob = await entry.async("blob");
+    try {
+      const blob = await entry.async("blob");
 
-    samples.push({
-      blob,
-      materialClass,
-      contaminationClass,
-      source: sourceName,
-      entry: entry.name
-    });
+      samples.push({
+        blob,
+        materialClass,
+        contaminationClass,
+        source: sourceName,
+        entry: entry.name
+      });
+    } catch (err) {
+      log(`  이미지 건너뜀: ${entry.name}`);
+    }
   }
 
   return samples;
@@ -505,23 +567,31 @@ async function trainFromZipFiles(zipFiles) {
   setStatus("이미지 특징 추출 중...", `총 ${samples.length}장의 이미지를 분석하고 있습니다.`, "loading");
 
   for (let i = 0; i < samples.length; i++) {
-    const img = await fileToImage(samples[i].blob);
-    const embedding = getEmbedding(img);
+    try {
+      const img = await fileToImage(samples[i].blob);
+      const embedding = getEmbedding(img);
 
-    xs.push(await embedding.array());
-    embedding.dispose();
+      xs.push(await embedding.array());
+      embedding.dispose();
 
-    const classIndex = classNames.indexOf(
-      makeClassName(samples[i].materialClass, samples[i].contaminationClass)
-    );
+      const classIndex = classNames.indexOf(
+        makeClassName(samples[i].materialClass, samples[i].contaminationClass)
+      );
 
-    ys.push(classIndex);
+      ys.push(classIndex);
+    } catch (err) {
+      log(`  이미지 특징 추출 실패. 1장 건너뜀.`);
+    }
 
     if (i % 3 === 0) {
       setProgress(45 + Math.round((i / samples.length) * 30));
       setStatus("이미지 특징 추출 중...", `${i + 1} / ${samples.length}장 처리 중입니다.`, "loading");
       await tf.nextFrame();
     }
+  }
+
+  if (xs.length < 4 || ys.length < 4) {
+    throw new Error("학습에 사용할 수 있는 정상 이미지가 너무 적습니다.");
   }
 
   const xTensor = tf.tensor2d(xs);
@@ -555,7 +625,7 @@ async function trainFromZipFiles(zipFiles) {
 
   await classifierModel.fit(xTensor, yTensor, {
     epochs: TRAIN_EPOCHS,
-    batchSize: Math.min(16, samples.length),
+    batchSize: Math.min(16, xs.length),
     shuffle: true,
     callbacks: {
       onEpochEnd: async (epoch, logs) => {
@@ -581,7 +651,7 @@ async function trainFromZipFiles(zipFiles) {
   localStorage.setItem(CLASS_KEY, JSON.stringify(classNames));
 
   setProgress(100);
-  setStatus("분석 준비 완료", "이미지 업로드 또는 카메라 분석을 사용할 수 있습니다.", "ready");
+  setStatus("분석 준비 완료", `정상 ZIP ${classNames.length}개 클래스로 학습 완료되었습니다.`, "ready");
   log("학습 완료. 모델이 브라우저에 저장되었습니다.");
 }
 
@@ -599,7 +669,7 @@ async function loadSavedModelFast() {
     classifierModel = await tf.loadLayersModel(MODEL_KEY + "/model.json");
 
     setProgress(100);
-    setStatus("분석 준비 완료", "저장된 모델을 불러왔습니다.", "ready");
+    setStatus("분석 준비 완료", `저장된 모델을 불러왔습니다. ${APP_VERSION}`, "ready");
     log("저장된 모델을 불러왔습니다.");
 
     return true;
@@ -848,8 +918,10 @@ function timeout(ms) {
 }
 
 async function startApp() {
+  applyVersionLabel();
+
   setProgress(3);
-  setStatus("모델 확인 중...", "저장된 모델이 있는지 빠르게 확인합니다.", "loading");
+  setStatus("모델 확인 중...", `저장된 모델이 있는지 빠르게 확인합니다. ${APP_VERSION}`, "loading");
 
   const hasModel = await Promise.race([
     loadSavedModelFast(),
@@ -858,12 +930,12 @@ async function startApp() {
 
   if (hasModel) {
     setProgress(100);
-    setStatus("분석 준비 완료", "저장된 모델을 불러왔습니다.", "ready");
+    setStatus("분석 준비 완료", `저장된 모델을 불러왔습니다. ${APP_VERSION}`, "ready");
     return;
   }
 
   setProgress(8);
-  setStatus("자동 학습 시작", "저장된 모델이 없어 빠른 학습을 시작합니다.", "loading");
+  setStatus("자동 학습 시작", `저장된 모델이 없어 빠른 학습을 시작합니다. ${APP_VERSION}`, "loading");
 
   await autoTrain();
 }
