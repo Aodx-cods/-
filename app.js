@@ -1,4 +1,4 @@
-const APP_VERSION = "v19";
+const APP_VERSION = "v20";
 
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
@@ -62,12 +62,14 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v19";
-const CLASS_KEY = "recycle-class-names-fast-v19";
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v20";
+const CLASS_KEY = "recycle-class-names-fast-v20";
 
-const MAX_IMAGES_PER_ZIP = 20;
-const TRAIN_EPOCHS = 6;
-const DENSE_UNITS = 64;
+const MAX_IMAGES_PER_ZIP = 24;
+const MAX_IMAGES_PER_CLASS = 18;
+const TRAIN_EPOCHS = 7;
+const DENSE_UNITS = 96;
+const PREDICTION_THRESHOLD = 0.45;
 
 let mobilenetModel = null;
 let classifierModel = null;
@@ -113,6 +115,105 @@ const els = {
   trainSelectedBtn: $("trainSelectedBtn")
 };
 
+function injectRuntimeStyles() {
+  if (document.getElementById("runtimeDetectionStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "runtimeDetectionStyles";
+  style.textContent = `
+    .detected-canvas-wrap{
+      margin: 0 0 18px 0;
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(8,12,20,.75);
+      border: 1px solid rgba(255,255,255,.08);
+      box-shadow: 0 10px 30px rgba(0,0,0,.22);
+    }
+    .detected-canvas{
+      display:block;
+      width:100%;
+      height:auto;
+      background:#09111c;
+    }
+    .result-summary{
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .result-metric{
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .result-metric span{
+      display:block;
+      font-size: 13px;
+      opacity:.75;
+      margin-bottom:8px;
+    }
+    .result-metric strong{
+      display:block;
+      font-size: 22px;
+      line-height:1.25;
+      margin-bottom:6px;
+    }
+    .result-metric em{
+      font-style:normal;
+      font-size: 13px;
+      opacity:.7;
+    }
+    .result-table{
+      width:100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(255,255,255,.08);
+      margin-bottom: 16px;
+    }
+    .result-table th,
+    .result-table td{
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      text-align: left;
+      font-size: 14px;
+    }
+    .result-table th{
+      opacity:.8;
+      font-weight:600;
+      background: rgba(255,255,255,.03);
+    }
+    .advice-box{
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(95, 207, 128, .12);
+      border: 1px solid rgba(95, 207, 128, .25);
+      line-height:1.6;
+      font-size:14px;
+    }
+    .advice-box.dirty{
+      background: rgba(255, 180, 72, .12);
+      border: 1px solid rgba(255, 180, 72, .25);
+    }
+    .result-caption{
+      font-size: 13px;
+      opacity: .75;
+      margin: 0 0 12px;
+    }
+    .empty-note{
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08);
+      opacity: .85;
+      line-height: 1.6;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function applyVersionLabel() {
   document.title = `스마트 재활용 분류 시스템 ${APP_VERSION}`;
 
@@ -124,11 +225,6 @@ function applyVersionLabel() {
   const eyebrow = document.querySelector(".eyebrow");
   if (eyebrow && !eyebrow.textContent.includes(APP_VERSION)) {
     eyebrow.textContent = `${eyebrow.textContent} · ${APP_VERSION}`;
-  }
-
-  const supportCard = document.querySelector(".support-card span");
-  if (supportCard && !supportCard.textContent.includes(APP_VERSION)) {
-    supportCard.textContent = `${supportCard.textContent} · ${APP_VERSION}`;
   }
 }
 
@@ -227,8 +323,8 @@ function encodePath(path) {
 
 function makeZipNameVariants(name) {
   const variants = new Set();
-
   const clean = String(name || "").trim();
+
   if (!clean) return [];
 
   variants.add(clean);
@@ -330,12 +426,10 @@ async function loadZipFilesFromRepo() {
   for (let i = 0; i < zipNames.length; i++) {
     const rawName = zipNames[i];
     const name = String(rawName).trim();
-
     if (!name) continue;
 
     const cleanName = name.replace(/^zips\//, "");
     const nameVariants = makeZipNameVariants(cleanName);
-
     const candidatePaths = [];
 
     for (const variant of nameVariants) {
@@ -361,9 +455,7 @@ async function loadZipFilesFromRepo() {
       }
 
       const blob = new Blob([buffer], { type: "application/zip" });
-
       files.push(new File([blob], cleanName, { type: "application/zip" }));
-
       log(`  불러옴: ${result.path}`);
     } catch (err) {
       skipped.push(cleanName);
@@ -385,8 +477,19 @@ async function loadZipFilesFromRepo() {
   }
 
   log(`사용 가능한 정상 ZIP ${files.length}개로 학습을 진행합니다.`);
-
   return files;
+}
+
+async function prepareBackend() {
+  try {
+    await tf.ready();
+    if (tf.getBackend() !== "webgl" && tf.findBackend && tf.findBackend("webgl")) {
+      await tf.setBackend("webgl");
+      await tf.ready();
+    }
+  } catch (err) {
+    console.warn("TF backend 설정 실패:", err);
+  }
 }
 
 async function loadBaseModel() {
@@ -425,10 +528,10 @@ async function fileToImage(fileOrBlob) {
   });
 }
 
-function getEmbedding(image) {
+function getEmbedding(imageSource) {
   return tf.tidy(() => {
     const tensor = tf.browser
-      .fromPixels(image)
+      .fromPixels(imageSource)
       .resizeBilinear([224, 224])
       .toFloat()
       .div(255)
@@ -451,9 +554,7 @@ async function readZipFile(file, sourceName) {
   const materialClass = detectClass(sourceName, MATERIAL_KEYWORDS, "unknown");
   const contaminationClass = detectClass(sourceName, CONTAMINATION_KEYWORDS, "uncertain");
 
-  let entries = Object.values(zip.files).filter(entry => {
-    return !entry.dir && isImageFile(entry.name);
-  });
+  let entries = Object.values(zip.files).filter(entry => !entry.dir && isImageFile(entry.name));
 
   if (!entries.length) {
     log(`  건너뜀: ${sourceName} 안에 이미지가 없습니다.`);
@@ -476,7 +577,6 @@ async function readZipFile(file, sourceName) {
   for (const entry of entries) {
     try {
       const blob = await entry.async("blob");
-
       samples.push({
         blob,
         materialClass,
@@ -505,6 +605,32 @@ function parseClassName(className) {
   };
 }
 
+function balanceSamples(samples) {
+  const groups = new Map();
+
+  for (const sample of samples) {
+    const key = makeClassName(sample.materialClass, sample.contaminationClass);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sample);
+  }
+
+  const counts = [...groups.values()].map(arr => arr.length);
+  if (!counts.length) return [];
+
+  const minCount = Math.min(...counts);
+  const targetCount = Math.max(4, Math.min(MAX_IMAGES_PER_CLASS, minCount));
+
+  const balanced = [];
+
+  for (const [key, arr] of groups.entries()) {
+    const picked = arr.slice(0, targetCount);
+    balanced.push(...picked);
+    log(`균형 샘플링: ${key} → ${picked.length}장 사용`);
+  }
+
+  return balanced;
+}
+
 async function buildTrainingData(zipFiles) {
   const samples = [];
 
@@ -528,9 +654,11 @@ async function buildTrainingData(zipFiles) {
     await tf.nextFrame();
   }
 
-  return samples.filter(sample => {
+  const filtered = samples.filter(sample => {
     return sample.materialClass !== "unknown" && sample.contaminationClass !== "uncertain";
   });
+
+  return balanceSamples(filtered);
 }
 
 async function trainFromZipFiles(zipFiles) {
@@ -542,11 +670,12 @@ async function trainFromZipFiles(zipFiles) {
 
   setStatus("학습 준비 중...", "데이터와 AI 엔진을 준비하고 있습니다.", "loading");
 
+  await prepareBackend();
   await loadBaseModel();
 
   const samples = await buildTrainingData(zipFiles);
 
-  if (samples.length < 4) {
+  if (samples.length < 8) {
     throw new Error("학습 가능한 이미지가 너무 적습니다.");
   }
 
@@ -590,7 +719,7 @@ async function trainFromZipFiles(zipFiles) {
     }
   }
 
-  if (xs.length < 4 || ys.length < 4) {
+  if (xs.length < 8 || ys.length < 8) {
     throw new Error("학습에 사용할 수 있는 정상 이미지가 너무 적습니다.");
   }
 
@@ -606,7 +735,7 @@ async function trainFromZipFiles(zipFiles) {
   }));
 
   classifierModel.add(tf.layers.dropout({
-    rate: 0.2
+    rate: 0.25
   }));
 
   classifierModel.add(tf.layers.dense({
@@ -651,7 +780,7 @@ async function trainFromZipFiles(zipFiles) {
   localStorage.setItem(CLASS_KEY, JSON.stringify(classNames));
 
   setProgress(100);
-  setStatus("분석 준비 완료", `정상 ZIP ${classNames.length}개 클래스로 학습 완료되었습니다.`, "ready");
+  setStatus("분석 준비 완료", `분석 모델 준비가 완료되었습니다. ${APP_VERSION}`, "ready");
   log("학습 완료. 모델이 브라우저에 저장되었습니다.");
 }
 
@@ -661,17 +790,13 @@ async function loadSavedModelFast() {
     setStatus("모델 확인 중...", "저장된 모델이 있는지 확인합니다.", "loading");
 
     classNames = JSON.parse(localStorage.getItem(CLASS_KEY) || "[]");
-
-    if (!classNames.length) {
-      return false;
-    }
+    if (!classNames.length) return false;
 
     classifierModel = await tf.loadLayersModel(MODEL_KEY + "/model.json");
 
     setProgress(100);
     setStatus("분석 준비 완료", `저장된 모델을 불러왔습니다. ${APP_VERSION}`, "ready");
     log("저장된 모델을 불러왔습니다.");
-
     return true;
   } catch (err) {
     return false;
@@ -705,6 +830,7 @@ function drawImageToCanvas(img, canvas, emptyEl) {
   canvas.height = Math.round(img.height * scale);
 
   const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   canvas.style.display = "block";
@@ -714,7 +840,273 @@ function drawImageToCanvas(img, canvas, emptyEl) {
   }
 }
 
-async function predictImage(imageElement, resultEl) {
+function makeCropCanvas(source, box) {
+  const c = document.createElement("canvas");
+  c.width = Math.max(8, Math.round(box.w));
+  c.height = Math.max(8, Math.round(box.h));
+
+  const ctx = c.getContext("2d");
+  ctx.drawImage(
+    source,
+    box.x, box.y, box.w, box.h,
+    0, 0, c.width, c.height
+  );
+
+  return c;
+}
+
+function generateCandidateBoxes(width, height) {
+  const boxes = [];
+
+  const add = (x, y, w, h) => {
+    const bx = Math.max(0, Math.round(x));
+    const by = Math.max(0, Math.round(y));
+    const bw = Math.min(width - bx, Math.round(w));
+    const bh = Math.min(height - by, Math.round(h));
+
+    if (bw > 24 && bh > 24) {
+      boxes.push({ x: bx, y: by, w: bw, h: bh });
+    }
+  };
+
+  add(0, 0, width, height); // full
+  add(width * 0.05, height * 0.05, width * 0.90, height * 0.90);
+  add(width * 0.15, height * 0.15, width * 0.70, height * 0.70);
+  add(width * 0.22, height * 0.12, width * 0.56, height * 0.76);
+
+  add(0, 0, width * 0.65, height * 0.65);
+  add(width * 0.35, 0, width * 0.65, height * 0.65);
+  add(0, height * 0.35, width * 0.65, height * 0.65);
+  add(width * 0.35, height * 0.35, width * 0.65, height * 0.65);
+
+  add(width * 0.10, 0, width * 0.80, height * 0.55);
+  add(width * 0.10, height * 0.45, width * 0.80, height * 0.55);
+  add(0, height * 0.10, width * 0.55, height * 0.80);
+  add(width * 0.45, height * 0.10, width * 0.55, height * 0.80);
+
+  return boxes;
+}
+
+async function predictSource(sourceCanvasOrImage) {
+  const embedding = getEmbedding(sourceCanvasOrImage);
+  const pred = classifierModel.predict(embedding.expandDims(0));
+  const probs = await pred.data();
+
+  embedding.dispose();
+  pred.dispose();
+
+  let topIndex = 0;
+  for (let i = 1; i < probs.length; i++) {
+    if (probs[i] > probs[topIndex]) topIndex = i;
+  }
+
+  const confidence = probs[topIndex];
+  const parsed = parseClassName(classNames[topIndex] || "unknown__uncertain");
+
+  return {
+    className: classNames[topIndex] || "unknown__uncertain",
+    confidence,
+    materialClass: parsed.materialClass,
+    contaminationClass: parsed.contaminationClass
+  };
+}
+
+async function findBestRegionPrediction(sourceImage) {
+  const width = sourceImage.naturalWidth || sourceImage.videoWidth || sourceImage.width;
+  const height = sourceImage.naturalHeight || sourceImage.videoHeight || sourceImage.height;
+
+  const boxes = generateCandidateBoxes(width, height);
+  let best = null;
+
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    const crop = makeCropCanvas(sourceImage, box);
+    const pred = await predictSource(crop);
+
+    const areaRatio = (box.w * box.h) / (width * height);
+    const score = pred.confidence - areaRatio * 0.08;
+
+    if (!best || score > best.score) {
+      best = {
+        ...pred,
+        box,
+        score
+      };
+    }
+
+    if (i % 3 === 0) {
+      await tf.nextFrame();
+    }
+  }
+
+  if (!best) {
+    return {
+      materialClass: "unknown",
+      contaminationClass: "uncertain",
+      confidence: 0,
+      box: { x: 0, y: 0, w: width, h: height },
+      score: 0
+    };
+  }
+
+  if (best.confidence < PREDICTION_THRESHOLD) {
+    return {
+      materialClass: "unknown",
+      contaminationClass: "uncertain",
+      confidence: best.confidence,
+      box: best.box,
+      score: best.score
+    };
+  }
+
+  return best;
+}
+
+function drawAnnotatedCanvas(sourceImage, prediction) {
+  const width = sourceImage.naturalWidth || sourceImage.videoWidth || sourceImage.width;
+  const height = sourceImage.naturalHeight || sourceImage.videoHeight || sourceImage.height;
+
+  const canvas = document.createElement("canvas");
+  const maxWidth = 900;
+  const scale = Math.min(1, maxWidth / width);
+
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+
+  const sx = canvas.width / width;
+  const sy = canvas.height / height;
+
+  const box = prediction.box || { x: 0, y: 0, w: width, h: height };
+  const x = box.x * sx;
+  const y = box.y * sy;
+  const w = box.w * sx;
+  const h = box.h * sy;
+
+  ctx.strokeStyle = "#59f16d";
+  ctx.lineWidth = Math.max(3, canvas.width * 0.004);
+  ctx.shadowColor = "rgba(89,241,109,.35)";
+  ctx.shadowBlur = 10;
+  ctx.strokeRect(x, y, w, h);
+  ctx.shadowBlur = 0;
+
+  const materialKor = MATERIAL_LABELS_KOR[prediction.materialClass] || "판정불가";
+  const contaminationKor = CONTAMINATION_LABELS_KOR[prediction.contaminationClass] || "판정불가";
+  const label = `${materialKor} / ${contaminationKor} ${(prediction.confidence * 100).toFixed(1)}%`;
+
+  ctx.font = `bold ${Math.max(14, Math.round(canvas.width * 0.022))}px sans-serif`;
+  const paddingX = 10;
+  const paddingY = 8;
+  const textWidth = ctx.measureText(label).width;
+  const labelW = textWidth + paddingX * 2;
+  const labelH = Math.max(28, Math.round(canvas.width * 0.04));
+  const labelX = x;
+  const labelY = Math.max(0, y - labelH - 6);
+
+  ctx.fillStyle = "rgba(13, 24, 18, .88)";
+  ctx.fillRect(labelX, labelY, labelW, labelH);
+
+  ctx.strokeStyle = "rgba(89,241,109,.95)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(labelX, labelY, labelW, labelH);
+
+  ctx.fillStyle = "#59f16d";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, labelX + paddingX, labelY + labelH / 2);
+
+  canvas.className = "detected-canvas";
+  return canvas;
+}
+
+function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = "이미지") {
+  const materialKor = MATERIAL_LABELS_KOR[prediction.materialClass] || "판정불가";
+  const contaminationKor = CONTAMINATION_LABELS_KOR[prediction.contaminationClass] || "판정불가";
+
+  const confident = prediction.materialClass !== "unknown";
+  const disposal =
+    prediction.contaminationClass === "dirty"
+      ? `세척 필요 / ${materialKor}류`
+      : prediction.materialClass === "unknown"
+        ? "재확인 필요"
+        : `정상 배출 / ${materialKor}류`;
+
+  let advice = `📌 분석한 영역을 초록 박스로 표시했습니다.`;
+
+  if (!confident) {
+    advice += ` 현재 신뢰도가 낮아 판정불가로 처리했습니다. 더 가까이 찍거나 배경을 단순하게 해보세요.`;
+  } else if (prediction.contaminationClass === "dirty") {
+    advice += ` ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 세척한 뒤 분리배출하세요.`;
+  } else {
+    advice += ` 깨끗한 ${materialKor}로 판단됩니다. 해당 수거함에 분리배출하세요.`;
+  }
+
+  const wrap = document.createElement("div");
+  const canvasWrap = document.createElement("div");
+  canvasWrap.className = "detected-canvas-wrap";
+  canvasWrap.appendChild(drawAnnotatedCanvas(sourceImage, prediction));
+
+  const resultSummaryHtml = `
+    <p class="result-caption">${sourceType}에서 가장 가능성이 높은 영역을 자동으로 찾아 분석했습니다.</p>
+
+    <div class="result-summary">
+      <div class="result-metric">
+        <span>재질</span>
+        <strong>${materialKor}</strong>
+        <em>${(prediction.confidence * 100).toFixed(1)}% 신뢰도</em>
+      </div>
+
+      <div class="result-metric">
+        <span>오염도</span>
+        <strong>${contaminationKor}</strong>
+        <em>${prediction.materialClass === "unknown" ? "신뢰도 낮음" : "AI 분석 결과"}</em>
+      </div>
+    </div>
+
+    <table class="result-table">
+      <thead>
+        <tr>
+          <th>번호</th>
+          <th>분석 방식</th>
+          <th>재질</th>
+          <th>재질 신뢰도</th>
+          <th>오염도</th>
+          <th>배출 방법</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>영역 스캔 AI</td>
+          <td>${materialKor}</td>
+          <td>${prediction.confidence.toFixed(3)}</td>
+          <td>${contaminationKor}</td>
+          <td>${disposal}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="advice-box ${prediction.contaminationClass === "dirty" ? "dirty" : ""}">
+      ${advice}
+    </div>
+  `;
+
+  wrap.appendChild(canvasWrap);
+
+  const body = document.createElement("div");
+  body.innerHTML = resultSummaryHtml;
+  wrap.appendChild(body);
+
+  resultEl.innerHTML = "";
+  resultEl.appendChild(wrap);
+}
+
+function renderEmptyResult(resultEl, message) {
+  resultEl.innerHTML = `<div class="empty-note">${message}</div>`;
+}
+
+async function predictImage(imageElement, resultEl, sourceType = "이미지") {
   if (!classifierModel || !classNames.length) {
     alert("아직 모델이 준비되지 않았습니다. 모델 상태를 확인해주세요.");
     return;
@@ -725,81 +1117,17 @@ async function predictImage(imageElement, resultEl) {
     return;
   }
 
+  renderEmptyResult(resultEl, "분석 중입니다. 잠시만 기다려주세요...");
+  await prepareBackend();
   await loadBaseModel();
 
-  const embedding = getEmbedding(imageElement);
-  const pred = classifierModel.predict(embedding.expandDims(0));
-  const probs = await pred.data();
-
-  embedding.dispose();
-  pred.dispose();
-
-  let topIndex = 0;
-
-  for (let i = 1; i < probs.length; i++) {
-    if (probs[i] > probs[topIndex]) {
-      topIndex = i;
-    }
+  try {
+    const prediction = await findBestRegionPrediction(imageElement);
+    renderPredictionResult(resultEl, imageElement, prediction, sourceType);
+  } catch (err) {
+    console.error(err);
+    renderEmptyResult(resultEl, "분석 중 오류가 발생했습니다. 다른 이미지를 시도해보세요.");
   }
-
-  const confidence = probs[topIndex];
-  const { materialClass, contaminationClass } = parseClassName(classNames[topIndex]);
-
-  const materialKor = MATERIAL_LABELS_KOR[materialClass] || materialClass;
-  const contaminationKor = CONTAMINATION_LABELS_KOR[contaminationClass] || contaminationClass;
-
-  const disposal =
-    contaminationClass === "dirty"
-      ? `세척 필요 / ${materialKor}류`
-      : `정상 배출 / ${materialKor}류`;
-
-  const advice =
-    contaminationClass === "dirty"
-      ? `⚠️ ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 물로 헹군 뒤 배출하세요.`
-      : `✅ 깨끗한 ${materialKor}로 판단됩니다. 알맞은 수거함에 분리배출하세요.`;
-
-  resultEl.innerHTML = `
-    <div class="result-summary">
-      <div class="result-metric">
-        <span>재질</span>
-        <strong>${materialKor}</strong>
-        <em>${(confidence * 100).toFixed(1)}%</em>
-      </div>
-
-      <div class="result-metric">
-        <span>오염도</span>
-        <strong>${contaminationKor}</strong>
-        <em>AI 분석 기준</em>
-      </div>
-    </div>
-
-    <table class="result-table">
-      <thead>
-        <tr>
-          <th>번호</th>
-          <th>탐지명</th>
-          <th>재질</th>
-          <th>신뢰도</th>
-          <th>오염도</th>
-          <th>배출 방법</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>1</td>
-          <td>${materialClass}</td>
-          <td>${materialKor}</td>
-          <td>${confidence.toFixed(3)}</td>
-          <td>${contaminationKor}</td>
-          <td>${disposal}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="advice-box ${contaminationClass === "dirty" ? "dirty" : ""}">
-      ${advice}
-    </div>
-  `;
 }
 
 els.navItems.forEach(btn => {
@@ -810,7 +1138,6 @@ els.navItems.forEach(btn => {
     btn.classList.add("active");
 
     const target = $(btn.dataset.view);
-
     if (target) {
       target.classList.add("active");
     }
@@ -820,17 +1147,20 @@ els.navItems.forEach(btn => {
 if (els.imageInput) {
   els.imageInput.addEventListener("change", async event => {
     const file = event.target.files[0];
-
     if (!file) return;
 
     uploadImage = await fileToImage(file);
     drawImageToCanvas(uploadImage, els.previewCanvas, els.imageEmpty);
+
+    if (els.result) {
+      renderEmptyResult(els.result, "이미지를 선택했습니다. 이제 분석 버튼을 눌러주세요.");
+    }
   });
 }
 
 if (els.predictBtn) {
   els.predictBtn.addEventListener("click", () => {
-    predictImage(uploadImage, els.result);
+    predictImage(uploadImage, els.result, "업로드 이미지");
   });
 }
 
@@ -859,11 +1189,11 @@ if (els.captureBtn) {
     }
 
     const canvas = els.cameraCanvas;
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
     const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(video, 0, 0);
 
     canvas.style.display = "block";
@@ -873,24 +1203,46 @@ if (els.captureBtn) {
     }
 
     const img = new Image();
-
     img.onload = () => {
       cameraImage = img;
+      if (els.cameraResult) {
+        renderEmptyResult(els.cameraResult, "촬영이 완료되었습니다. 이제 분석 버튼을 눌러주세요.");
+      }
     };
-
     img.src = canvas.toDataURL("image/jpeg");
   });
 }
 
 if (els.cameraPredictBtn) {
   els.cameraPredictBtn.addEventListener("click", () => {
-    predictImage(cameraImage, els.cameraResult);
+    predictImage(cameraImage, els.cameraResult, "카메라 촬영 이미지");
   });
 }
 
 if (els.trainManifestBtn) {
   els.trainManifestBtn.addEventListener("click", async () => {
     await autoTrain();
+  });
+}
+
+if (els.trainSelectedBtn && els.zipInput) {
+  els.trainSelectedBtn.addEventListener("click", async () => {
+    const files = Array.from(els.zipInput.files || []).filter(file =>
+      String(file.name || "").toLowerCase().endsWith(".zip")
+    );
+
+    if (!files.length) {
+      alert("학습할 ZIP 파일을 먼저 선택하세요.");
+      return;
+    }
+
+    try {
+      await trainFromZipFiles(files);
+    } catch (err) {
+      setStatus("선택 ZIP 학습 실패", err.message, "error");
+      log(`오류: ${err.message}`);
+      alert(`선택한 ZIP 학습에 실패했습니다.\n\n${err.message}`);
+    }
   });
 }
 
@@ -918,7 +1270,17 @@ function timeout(ms) {
 }
 
 async function startApp() {
+  injectRuntimeStyles();
   applyVersionLabel();
+  await prepareBackend();
+
+  if (els.result) {
+    renderEmptyResult(els.result, "이미지를 업로드한 뒤 분석을 시작하세요.");
+  }
+
+  if (els.cameraResult) {
+    renderEmptyResult(els.cameraResult, "카메라 촬영 후 분석 버튼을 누르세요.");
+  }
 
   setProgress(3);
   setStatus("모델 확인 중...", `저장된 모델이 있는지 빠르게 확인합니다. ${APP_VERSION}`, "loading");
