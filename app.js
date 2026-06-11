@@ -1,4 +1,4 @@
-const APP_VERSION = "v20";
+const APP_VERSION = "v21";
 
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
@@ -62,14 +62,13 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v20";
-const CLASS_KEY = "recycle-class-names-fast-v20";
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v21";
+const CLASS_KEY = "recycle-class-names-fast-v21";
 
 const MAX_IMAGES_PER_ZIP = 24;
 const MAX_IMAGES_PER_CLASS = 18;
 const TRAIN_EPOCHS = 7;
 const DENSE_UNITS = 96;
-const PREDICTION_THRESHOLD = 0.45;
 
 let mobilenetModel = null;
 let classifierModel = null;
@@ -242,35 +241,16 @@ function log(message) {
 function setProgress(value) {
   const safe = Math.max(0, Math.min(100, Math.round(value)));
 
-  if (els.progressBar) {
-    els.progressBar.style.width = `${safe}%`;
-  }
-
-  if (els.progressText) {
-    els.progressText.textContent = `${safe}%`;
-  }
-
-  if (els.trainProgress) {
-    els.trainProgress.value = safe;
-  }
-
-  if (els.statusProgressBar) {
-    els.statusProgressBar.style.width = `${safe}%`;
-  }
-
-  if (els.statusProgressText) {
-    els.statusProgressText.textContent = `${safe}%`;
-  }
+  if (els.progressBar) els.progressBar.style.width = `${safe}%`;
+  if (els.progressText) els.progressText.textContent = `${safe}%`;
+  if (els.trainProgress) els.trainProgress.value = safe;
+  if (els.statusProgressBar) els.statusProgressBar.style.width = `${safe}%`;
+  if (els.statusProgressText) els.statusProgressText.textContent = `${safe}%`;
 }
 
 function setStatus(text, desc = "", type = "loading") {
-  if (els.modelStatusText) {
-    els.modelStatusText.textContent = text;
-  }
-
-  if (els.statusDesc) {
-    els.statusDesc.textContent = desc;
-  }
+  if (els.modelStatusText) els.modelStatusText.textContent = text;
+  if (els.statusDesc) els.statusDesc.textContent = desc;
 
   if (els.statusChip) {
     els.statusChip.className = `status-chip ${type}`;
@@ -483,6 +463,7 @@ async function loadZipFilesFromRepo() {
 async function prepareBackend() {
   try {
     await tf.ready();
+
     if (tf.getBackend() !== "webgl" && tf.findBackend && tf.findBackend("webgl")) {
       await tf.setBackend("webgl");
       await tf.ready();
@@ -577,6 +558,7 @@ async function readZipFile(file, sourceName) {
   for (const entry of entries) {
     try {
       const blob = await entry.async("blob");
+
       samples.push({
         blob,
         materialClass,
@@ -619,7 +601,6 @@ function balanceSamples(samples) {
 
   const minCount = Math.min(...counts);
   const targetCount = Math.max(4, Math.min(MAX_IMAGES_PER_CLASS, minCount));
-
   const balanced = [];
 
   for (const [key, arr] of groups.entries()) {
@@ -869,7 +850,7 @@ function generateCandidateBoxes(width, height) {
     }
   };
 
-  add(0, 0, width, height); // full
+  add(0, 0, width, height);
   add(width * 0.05, height * 0.05, width * 0.90, height * 0.90);
   add(width * 0.15, height * 0.15, width * 0.70, height * 0.70);
   add(width * 0.22, height * 0.12, width * 0.56, height * 0.76);
@@ -924,7 +905,14 @@ async function findBestRegionPrediction(sourceImage) {
     const pred = await predictSource(crop);
 
     const areaRatio = (box.w * box.h) / (width * height);
-    const score = pred.confidence - areaRatio * 0.08;
+
+    /*
+      v21:
+      신뢰도가 낮아도 판정불가로 강제 변경하지 않음.
+      가장 가능성 높은 결과를 표시하고,
+      낮은 신뢰도는 안내 문구로만 알려줌.
+    */
+    const score = pred.confidence - areaRatio * 0.04;
 
     if (!best || score > best.score) {
       best = {
@@ -945,21 +933,15 @@ async function findBestRegionPrediction(sourceImage) {
       contaminationClass: "uncertain",
       confidence: 0,
       box: { x: 0, y: 0, w: width, h: height },
-      score: 0
+      score: 0,
+      lowConfidence: true
     };
   }
 
-  if (best.confidence < PREDICTION_THRESHOLD) {
-    return {
-      materialClass: "unknown",
-      contaminationClass: "uncertain",
-      confidence: best.confidence,
-      box: best.box,
-      score: best.score
-    };
-  }
-
-  return best;
+  return {
+    ...best,
+    lowConfidence: best.confidence < 0.35
+  };
 }
 
 function drawAnnotatedCanvas(sourceImage, prediction) {
@@ -998,7 +980,6 @@ function drawAnnotatedCanvas(sourceImage, prediction) {
 
   ctx.font = `bold ${Math.max(14, Math.round(canvas.width * 0.022))}px sans-serif`;
   const paddingX = 10;
-  const paddingY = 8;
   const textWidth = ctx.measureText(label).width;
   const labelW = textWidth + paddingX * 2;
   const labelH = Math.max(28, Math.round(canvas.width * 0.04));
@@ -1024,7 +1005,6 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
   const materialKor = MATERIAL_LABELS_KOR[prediction.materialClass] || "판정불가";
   const contaminationKor = CONTAMINATION_LABELS_KOR[prediction.contaminationClass] || "판정불가";
 
-  const confident = prediction.materialClass !== "unknown";
   const disposal =
     prediction.contaminationClass === "dirty"
       ? `세척 필요 / ${materialKor}류`
@@ -1034,8 +1014,8 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
 
   let advice = `📌 분석한 영역을 초록 박스로 표시했습니다.`;
 
-  if (!confident) {
-    advice += ` 현재 신뢰도가 낮아 판정불가로 처리했습니다. 더 가까이 찍거나 배경을 단순하게 해보세요.`;
+  if (prediction.lowConfidence) {
+    advice += ` 다만 신뢰도가 낮은 편이므로 배경을 단순하게 하고 물체를 더 크게 찍으면 정확도가 올라갑니다.`;
   } else if (prediction.contaminationClass === "dirty") {
     advice += ` ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 세척한 뒤 분리배출하세요.`;
   } else {
@@ -1060,7 +1040,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
       <div class="result-metric">
         <span>오염도</span>
         <strong>${contaminationKor}</strong>
-        <em>${prediction.materialClass === "unknown" ? "신뢰도 낮음" : "AI 분석 결과"}</em>
+        <em>${prediction.lowConfidence ? "신뢰도 낮음" : "AI 분석 결과"}</em>
       </div>
     </div>
 
