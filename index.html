@@ -17,114 +17,112 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">♻️</div>
+        <div class="brand-icon">♻️</div>
         <div>
           <h1>Recycle AI</h1>
           <p>스마트 재활용 분류</p>
         </div>
       </div>
 
-      <nav class="menu">
-        <button class="nav-btn active" data-view="uploadView">
+      <nav class="nav">
+        <button class="nav-item active" data-view="imageView">
           <span>🖼️</span>
           <div>
             <strong>이미지 분석</strong>
-            <small>사진 업로드</small>
+            <small>사진 업로드로 확인</small>
           </div>
         </button>
 
-        <button class="nav-btn" data-view="cameraView">
+        <button class="nav-item" data-view="cameraView">
           <span>📷</span>
           <div>
             <strong>카메라 분석</strong>
-            <small>실시간 촬영</small>
+            <small>휴대폰 카메라 사용 가능</small>
           </div>
         </button>
 
-        <button class="nav-btn" data-view="trainView">
+        <button class="nav-item" data-view="modelView">
           <span>⚙️</span>
           <div>
-            <strong>학습 상태</strong>
-            <small>모델 준비 확인</small>
+            <strong>모델 상태</strong>
+            <small>학습 진행 확인</small>
           </div>
         </button>
       </nav>
 
-      <div class="sidebar-card">
-        <p>현재 지원</p>
+      <div class="support-card">
+        <p>지원 품목</p>
         <strong>종이 · 캔 · 비닐 · 유리 · 스티로폼</strong>
-        <span>오염o / 오염0 / 오염x 자동 인식</span>
+        <span>오염o, 오염0, 오염x 자동 인식</span>
       </div>
     </aside>
 
-    <main class="content">
-      <header class="header">
+    <main class="main">
+      <header class="hero">
         <div>
-          <span class="kicker">AI Waste Sorting Dashboard</span>
-          <h2>스마트 재활용 분류 시스템</h2>
+          <span class="eyebrow">AI WASTE SORTING</span>
+          <h2>스마트 재활용<br />분류 시스템</h2>
           <p>이미지 또는 카메라로 재활용품의 재질과 오염 상태를 분석합니다.</p>
         </div>
 
-        <div class="status-card">
+        <section class="status-panel">
           <div id="statusChip" class="status-chip loading">진행 중</div>
-          <strong id="modelStatusText">모델 확인 중...</strong>
+          <h3 id="modelStatusText">모델 확인 중...</h3>
           <p id="statusDesc">처음 접속 시 학습 데이터를 자동으로 준비합니다.</p>
-        </div>
+        </section>
       </header>
 
-      <section id="uploadView" class="view active">
+      <section id="imageView" class="view active">
         <div class="section-head">
           <div>
             <span>IMAGE MODE</span>
             <h3>이미지 업로드 분석</h3>
           </div>
-          <p>분석할 이미지를 선택하면 AI가 재질과 오염도를 판정합니다.</p>
+          <p>분석할 사진을 선택한 뒤 결과를 확인하세요.</p>
         </div>
 
-        <div class="workspace">
-          <div class="card input-card">
-            <div class="card-title">
+        <div class="grid">
+          <section class="card">
+            <div class="card-head">
               <h4>원본 이미지</h4>
-              <p>JPG, PNG, JPEG 파일을 사용할 수 있습니다.</p>
+              <p>JPG, PNG, JPEG 이미지를 사용할 수 있습니다.</p>
             </div>
 
-            <label class="upload-zone">
+            <label class="upload-box">
               <input id="imageInput" type="file" accept="image/*" />
-              <div class="upload-icon">+</div>
+              <span class="upload-plus">+</span>
               <div>
                 <strong>이미지 선택</strong>
-                <span>분석할 사진을 업로드하세요</span>
+                <small>분석할 사진을 업로드하세요</small>
               </div>
             </label>
 
-            <div class="preview-box">
+            <div class="preview">
               <canvas id="previewCanvas"></canvas>
-              <div id="uploadEmpty" class="empty">
-                <div>🖼️</div>
+              <div id="imageEmpty" class="empty">
+                <span>🖼️</span>
                 <strong>이미지가 없습니다</strong>
-                <p>사진을 선택하면 미리보기가 표시됩니다.</p>
+                <p>이미지를 선택하면 미리보기가 표시됩니다.</p>
               </div>
             </div>
 
-            <button id="predictBtn" class="main-btn">
-              분석 시작
-            </button>
-          </div>
+            <button id="predictBtn" class="primary-btn">분석 시작</button>
+          </section>
 
-          <div class="card result-card">
-            <div class="card-title">
+          <section class="card">
+            <div class="card-head">
               <h4>분석 결과</h4>
-              <p>AI가 판단한 결과가 여기에 표시됩니다.</p>
+              <p>AI가 판단한 재질과 오염도가 표시됩니다.</p>
             </div>
 
             <div id="result" class="result-box">
               <div class="empty">
-                <div>🧠</div>
+                <span>🧠</span>
                 <strong>아직 분석 결과가 없습니다</strong>
                 <p>이미지를 선택한 뒤 분석을 시작하세요.</p>
               </div>
             </div>
-          </div>
+          </section>
         </div>
       </section>
 
@@ -134,70 +132,70 @@
             <span>CAMERA MODE</span>
             <h3>카메라 촬영 분석</h3>
           </div>
-          <p>카메라로 재활용품을 촬영한 뒤 바로 분석할 수 있습니다.</p>
+          <p>카메라로 촬영한 이미지를 바로 분석합니다.</p>
         </div>
 
-        <div class="workspace">
-          <div class="card input-card">
-            <div class="card-title">
+        <div class="grid">
+          <section class="card">
+            <div class="card-head">
               <h4>카메라 화면</h4>
-              <p>물체가 화면 중앙에 오도록 촬영하세요.</p>
+              <p>재활용품이 화면 중앙에 오도록 맞춰주세요.</p>
             </div>
 
             <div class="camera-box">
               <video id="cameraVideo" autoplay playsinline></video>
-              <div class="focus-frame">
+              <div class="focus">
                 <span></span><span></span><span></span><span></span>
               </div>
             </div>
 
-            <div class="actions">
-              <button id="startCameraBtn" class="sub-btn">카메라 켜기</button>
-              <button id="captureBtn" class="sub-btn green">촬영</button>
-              <button id="cameraPredictBtn" class="main-btn compact">촬영 이미지 분석</button>
+            <div class="button-row">
+              <button id="startCameraBtn" class="secondary-btn">카메라 켜기</button>
+              <button id="captureBtn" class="secondary-btn green">촬영</button>
+              <button id="cameraPredictBtn" class="secondary-btn green">촬영 이미지 분석</button>
             </div>
-          </div>
+          </section>
 
-          <div class="card result-card">
-            <div class="card-title">
+          <section class="card">
+            <div class="card-head">
               <h4>촬영 이미지 및 결과</h4>
-              <p>촬영한 이미지와 분석 결과를 확인하세요.</p>
+              <p>촬영 후 분석 결과가 함께 표시됩니다.</p>
             </div>
 
-            <div class="preview-box camera-preview">
+            <div class="preview small">
               <canvas id="cameraCanvas"></canvas>
               <div id="cameraEmpty" class="empty">
-                <div>📷</div>
+                <span>📷</span>
                 <strong>촬영 이미지가 없습니다</strong>
                 <p>촬영 버튼을 누르면 여기에 표시됩니다.</p>
               </div>
             </div>
 
-            <div id="cameraResult" class="result-box camera-result">
+            <div id="cameraResult" class="result-box compact">
               <div class="empty">
-                <div>🧠</div>
+                <span>🧠</span>
                 <strong>아직 분석 결과가 없습니다</strong>
                 <p>촬영 후 분석을 시작하세요.</p>
               </div>
             </div>
-          </div>
+          </section>
         </div>
       </section>
 
-      <section id="trainView" class="view">
+      <section id="modelView" class="view">
         <div class="section-head">
           <div>
             <span>MODEL STATUS</span>
-            <h3>학습 상태 확인</h3>
+            <h3>모델 상태</h3>
           </div>
           <p>자동 학습 진행률과 로그를 확인할 수 있습니다.</p>
         </div>
 
-        <div class="workspace train-layout">
-          <div class="card">
-            <div class="card-title">
-              <h4>모델 준비 상태</h4>
-              <p>ZIP 데이터셋을 불러와 자동으로 학습합니다.</p>
+        <div class="grid model-grid">
+          <section class="card">
+            <div class="card-head">
+              <h4>학습 진행률</h4>
+              <p>처음 접속 시 ZIP 이미지를 압축 해제해 학습합니다.</p>
             </div>
 
             <div class="progress-card">
@@ -205,32 +203,29 @@
                 <span>진행률</span>
                 <strong id="progressText">0%</strong>
               </div>
-
-              <div class="progress-outer">
-                <div id="progressBar" class="progress-inner"></div>
+              <div class="progress-track">
+                <div id="progressBar" class="progress-bar"></div>
               </div>
-
               <progress id="trainProgress" value="0" max="100"></progress>
             </div>
 
-            <div class="actions vertical">
-              <button id="trainManifestBtn" class="sub-btn green">다시 자동 학습</button>
-              <button id="clearModelBtn" class="sub-btn danger">저장 모델 초기화</button>
+            <div class="button-row vertical">
+              <button id="trainManifestBtn" class="secondary-btn green">다시 학습</button>
+              <button id="clearModelBtn" class="secondary-btn danger">저장 모델 초기화</button>
             </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">
-              <h4>학습 로그</h4>
-              <p>오류가 발생하면 이곳에서 원인을 확인할 수 있습니다.</p>
-            </div>
-
-            <pre id="trainLog" class="log-box">학습 로그가 여기에 표시됩니다.</pre>
 
             <input id="zipInput" type="file" multiple accept=".zip" hidden />
             <button id="trainSelectedBtn" hidden></button>
-            <button id="retrainBtn" hidden></button>
-          </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h4>학습 로그</h4>
+              <p>문제가 생기면 이곳에서 원인을 확인하세요.</p>
+            </div>
+
+            <pre id="trainLog" class="log-box">학습 로그가 여기에 표시됩니다.</pre>
+          </section>
         </div>
       </section>
     </main>
