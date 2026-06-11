@@ -1,460 +1,226 @@
-const MATERIAL_LABELS_KOR = {
-  glass: "유리",
-  paper: "종이",
-  can: "캔",
-  vinyl: "비닐",
-  styrofoam: "스티로폼",
-  plastic: "플라스틱",
-  unknown: "판정불가"
-};
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-const CONTAMINATION_LABELS_KOR = {
-  clean: "깨끗함",
-  dirty: "오염됨",
-  uncertain: "판정불가"
-};
+  <title>스마트 재활용 분류 시스템</title>
 
-const MATERIAL_KEYWORDS = {
-  glass: ["유리", "glass"],
-  paper: ["종이", "paper"],
-  can: ["캔", "can", "aluminum", "알루미늄"],
-  vinyl: ["비닐", "vinyl"],
-  styrofoam: ["스티로폼", "styrofoam", "스티로폼박스"],
-  plastic: ["플라스틱", "plastic", "pet", "페트"]
-};
+  <link rel="stylesheet" href="style.css" />
 
-const CONTAMINATION_KEYWORDS = {
-  dirty: ["오염o", "오염 o", "오염O", "오염 O", "오염0", "오염 0", "오염됨", "dirty"],
-  clean: ["오염x", "오염 x", "오염X", "오염 X", "깨끗", "clean"]
-};
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
 
-const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
-const MODEL_KEY = "indexeddb://recycle-classifier-v2";
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="logo-wrap">
+        <div class="logo-icon">♻️</div>
+        <div>
+          <h1>Recycle AI</h1>
+          <p>재활용 분류 시스템</p>
+        </div>
+      </div>
 
-let mobilenetModel = null;
-let classifierModel = null;
-let classNames = [];
-let uploadImageElement = null;
-let cameraImageElement = null;
-let cameraStream = null;
+      <nav class="side-nav">
+        <button class="nav-btn active" data-view="uploadView">
+          <span>🖼️</span>
+          이미지 업로드 분석
+        </button>
 
-const els = {
-  navBtns: document.querySelectorAll(".mode"),
-  views: document.querySelectorAll(".view"),
-  modelStatusText: document.getElementById("modelStatusText"),
-  statusDesc: document.getElementById("statusDesc"),
-  statusChip: document.getElementById("statusChip"),
-  progressBar: document.getElementById("progressBar"),
-  progressText: document.getElementById("progressText"),
-  trainLog: document.getElementById("trainLog"),
-  trainProgress: document.getElementById("trainProgress"),
-  zipInput: document.getElementById("zipInput"),
-  trainSelectedBtn: document.getElementById("trainSelectedBtn"),
-  trainManifestBtn: document.getElementById("trainManifestBtn"),
-  clearModelBtn: document.getElementById("clearModelBtn"),
-  retrainBtn: document.getElementById("retrainBtn"),
-  imageInput: document.getElementById("imageInput"),
-  previewCanvas: document.getElementById("previewCanvas"),
-  uploadEmpty: document.getElementById("uploadEmpty"),
-  predictBtn: document.getElementById("predictBtn"),
-  result: document.getElementById("result"),
-  cameraVideo: document.getElementById("cameraVideo"),
-  cameraCanvas: document.getElementById("cameraCanvas"),
-  cameraEmpty: document.getElementById("cameraEmpty"),
-  startCameraBtn: document.getElementById("startCameraBtn"),
-  captureBtn: document.getElementById("captureBtn"),
-  cameraPredictBtn: document.getElementById("cameraPredictBtn"),
-  cameraResult: document.getElementById("cameraResult")
-};
+        <button class="nav-btn" data-view="cameraView">
+          <span>📷</span>
+          카메라 촬영 분석
+        </button>
 
-function log(message) {
-  if (!els.trainLog) return;
-  if (els.trainLog.textContent === "학습 로그가 여기에 표시됩니다.") els.trainLog.textContent = "";
-  els.trainLog.textContent += `${message}\n`;
-  els.trainLog.scrollTop = els.trainLog.scrollHeight;
-}
+        <button class="nav-btn" data-view="trainView">
+          <span>📦</span>
+          학습 상태 확인
+        </button>
+      </nav>
 
-function setProgress(value) {
-  const safeValue = Math.max(0, Math.min(100, Math.round(value)));
-  if (els.progressBar) els.progressBar.style.width = `${safeValue}%`;
-  if (els.progressText) els.progressText.textContent = `${safeValue}%`;
-  if (els.trainProgress) els.trainProgress.value = safeValue;
-}
+      <div class="side-card">
+        <span class="side-label">학습 데이터</span>
+        <strong>ZIP 자동 압축 해제</strong>
+        <p>접속 시 ZIP 데이터를 읽고 모델을 준비합니다.</p>
+      </div>
+    </aside>
 
-function setStatus(text, desc = "", type = "loading") {
-  if (els.modelStatusText) els.modelStatusText.textContent = text;
-  if (els.statusDesc) els.statusDesc.textContent = desc;
-  if (els.statusChip) {
-    els.statusChip.className = `chip ${type}`;
-    els.statusChip.textContent = type === "ready" ? "준비 완료" : type === "error" ? "오류" : "진행 중";
-  }
-}
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AI Recycling Classifier</p>
+          <h2>스마트 재활용 분류 시스템</h2>
+          <p class="top-desc">이미지를 분석해 재질과 오염 상태를 판정합니다.</p>
+        </div>
 
-function normalizeName(text) {
-  return String(text || "")
-    .normalize("NFC")
-    .toLowerCase()
-    .replace(/\(1\)/g, "")
-    .replace(/[＿_\-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+        <div class="status-card">
+          <span id="statusChip">진행 중</span>
+          <strong id="modelStatusText">모델 확인 중...</strong>
+          <p id="statusDesc">처음 접속 시 자동 학습이 진행됩니다.</p>
+        </div>
+      </header>
 
-function detectClass(text, mapping, fallback) {
-  const normalized = normalizeName(text);
-  for (const [className, keywords] of Object.entries(mapping)) {
-    for (const keyword of keywords) {
-      if (normalized.includes(normalizeName(keyword))) return className;
-    }
-  }
-  return fallback;
-}
+      <section id="uploadView" class="view active">
+        <div class="view-header">
+          <p class="step">IMAGE ANALYSIS</p>
+          <h3>이미지 업로드 분석</h3>
+          <span>사진을 선택한 뒤 분석 버튼을 누르세요.</span>
+        </div>
 
-function isImageFile(name) {
-  const lower = String(name || "").toLowerCase();
-  return IMAGE_EXTS.some(ext => lower.endsWith(ext));
-}
+        <div class="analysis-grid">
+          <div class="panel">
+            <div class="panel-title">
+              <h4>원본 이미지</h4>
+              <p>분석할 이미지를 업로드하세요.</p>
+            </div>
 
-function encodePath(path) {
-  return String(path).split("/").map(part => encodeURIComponent(part)).join("/");
-}
+            <label class="file-drop">
+              <input id="imageInput" type="file" accept="image/*" />
+              <div>
+                <strong>이미지 선택</strong>
+                <span>JPG, PNG, JPEG</span>
+              </div>
+            </label>
 
-async function fetchFirstAvailable(paths) {
-  let lastError = null;
-  for (const path of paths) {
-    try {
-      const res = await fetch(encodePath(path), { cache: "no-store" });
-      if (res.ok) return { res, path };
-      lastError = new Error(`${path} 불러오기 실패: ${res.status}`);
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError || new Error("파일을 불러올 수 없습니다.");
-}
+            <div class="image-frame">
+              <canvas id="previewCanvas"></canvas>
+              <div id="uploadEmpty" class="empty-preview">
+                <span>🖼️</span>
+                <strong>이미지가 없습니다</strong>
+                <p>이미지를 선택하면 여기에 표시됩니다.</p>
+              </div>
+            </div>
 
-async function loadBaseModel() {
-  if (!mobilenetModel) {
-    setStatus("기본 모델을 불러오는 중", "처음 한 번만 시간이 걸립니다.");
-    log("MobileNet 기본 모델 로딩 중...");
-    mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
-    log("MobileNet 로딩 완료");
-  }
-}
+            <button id="predictBtn" class="primary-action">
+              🔍 이미지 분석 시작
+            </button>
+          </div>
 
-async function fileToImage(fileOrBlob) {
-  const url = URL.createObjectURL(fileOrBlob);
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = err => { URL.revokeObjectURL(url); reject(err); };
-    img.src = url;
-  });
-}
+          <div class="panel result-panel">
+            <div class="panel-title">
+              <h4>분석 결과</h4>
+              <p>재질과 오염도를 확인합니다.</p>
+            </div>
 
-function getEmbedding(image) {
-  return tf.tidy(() => {
-    const tensor = tf.browser.fromPixels(image)
-      .resizeBilinear([224, 224])
-      .toFloat()
-      .div(255)
-      .expandDims(0);
-    return mobilenetModel.infer(tensor, true).squeeze();
-  });
-}
+            <div id="result" class="result-box">
+              <div class="empty-result">
+                <span>🧠</span>
+                <strong>아직 분석 결과가 없습니다</strong>
+                <p>왼쪽에서 이미지를 선택하고 분석을 시작하세요.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-async function readZipFile(file, sourceName) {
-  const zip = await JSZip.loadAsync(file);
-  const materialClass = detectClass(sourceName, MATERIAL_KEYWORDS, "unknown");
-  const contaminationClass = detectClass(sourceName, CONTAMINATION_KEYWORDS, "uncertain");
-  const entries = Object.values(zip.files).filter(entry => !entry.dir && isImageFile(entry.name));
-  const samples = [];
+      <section id="cameraView" class="view">
+        <div class="view-header">
+          <p class="step">CAMERA ANALYSIS</p>
+          <h3>카메라 촬영 분석</h3>
+          <span>카메라로 촬영한 이미지를 분석합니다.</span>
+        </div>
 
-  for (const entry of entries) {
-    const blob = await entry.async("blob");
-    samples.push({ blob, materialClass, contaminationClass, source: sourceName, entry: entry.name });
-  }
-  return samples;
-}
+        <div class="analysis-grid">
+          <div class="panel">
+            <div class="panel-title">
+              <h4>카메라 화면</h4>
+              <p>물체가 잘 보이도록 촬영하세요.</p>
+            </div>
 
-function makeClassName(materialClass, contaminationClass) {
-  return `${materialClass}__${contaminationClass}`;
-}
+            <div class="camera-frame">
+              <video id="cameraVideo" autoplay playsinline></video>
+              <div class="camera-guide">
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
 
-function parseClassName(className) {
-  const [materialClass, contaminationClass] = String(className).split("__");
-  return { materialClass: materialClass || "unknown", contaminationClass: contaminationClass || "uncertain" };
-}
+            <div class="button-row">
+              <button id="startCameraBtn" class="secondary-action">카메라 켜기</button>
+              <button id="captureBtn" class="primary-action small">촬영</button>
+              <button id="cameraPredictBtn" class="primary-action small">🔍 촬영 이미지 분석</button>
+            </div>
+          </div>
 
-async function loadZipFilesFromManifest() {
-  const manifestResult = await fetchFirstAvailable(["zips/manifest.json", "manifest.json"]);
-  log(`manifest 위치: ${manifestResult.path}`);
-  const manifest = await manifestResult.res.json();
-  if (!manifest.files || !Array.isArray(manifest.files)) {
-    throw new Error('manifest.json은 { "files": [...] } 형식이어야 합니다.');
-  }
+          <div class="panel result-panel">
+            <div class="panel-title">
+              <h4>카메라 분석 결과</h4>
+              <p>촬영된 이미지를 기준으로 분석합니다.</p>
+            </div>
 
-  const files = [];
-  for (const rawName of manifest.files) {
-    const name = String(rawName).normalize("NFC").trim();
-    if (!name) continue;
-    const cleanName = name.replace(/^zips\//, "");
-    const withoutCopy = cleanName.replace(/\(1\)(?=\.zip$)/i, "");
-    const candidates = [
-      `zips/${cleanName}`,
-      cleanName,
-      name,
-      `zips/${withoutCopy}`,
-      withoutCopy,
-      `zips/${cleanName.replace(/오염o/gi, "오염0")}`,
-      cleanName.replace(/오염o/gi, "오염0"),
-      `zips/${cleanName.replace(/오염0/g, "오염o")}`,
-      cleanName.replace(/오염0/g, "오염o")
-    ];
-    log(`ZIP 불러오는 중: ${name}`);
-    const zipResult = await fetchFirstAvailable([...new Set(candidates)]);
-    const blob = await zipResult.res.blob();
-    log(`  불러옴: ${zipResult.path}`);
-    files.push(new File([blob], cleanName, { type: "application/zip" }));
-  }
-  return files;
-}
+            <div class="image-frame small-preview">
+              <canvas id="cameraCanvas"></canvas>
+              <div id="cameraEmpty" class="empty-preview">
+                <span>📷</span>
+                <strong>촬영 이미지가 없습니다</strong>
+                <p>촬영 버튼을 누르면 여기에 표시됩니다.</p>
+              </div>
+            </div>
 
-async function buildTrainingData(zipFiles) {
-  const samples = [];
-  for (const file of zipFiles) {
-    log(`ZIP 압축 해제: ${file.name}`);
-    const zipSamples = await readZipFile(file, file.name);
-    const materialClass = detectClass(file.name, MATERIAL_KEYWORDS, "unknown");
-    const contaminationClass = detectClass(file.name, CONTAMINATION_KEYWORDS, "uncertain");
-    log(`  이미지 ${zipSamples.length}장 / ${MATERIAL_LABELS_KOR[materialClass] || materialClass} / ${CONTAMINATION_LABELS_KOR[contaminationClass] || contaminationClass}`);
-    samples.push(...zipSamples);
-  }
-  return samples.filter(s => s.materialClass !== "unknown" && s.contaminationClass !== "uncertain");
-}
+            <div id="cameraResult" class="result-box">
+              <div class="empty-result">
+                <span>🧠</span>
+                <strong>아직 분석 결과가 없습니다</strong>
+                <p>카메라 촬영 후 분석을 시작하세요.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-async function trainFromZipFiles(zipFiles) {
-  if (els.trainLog) els.trainLog.textContent = "";
-  setProgress(0);
-  setStatus("학습 데이터를 준비하는 중", "ZIP 파일을 압축 해제하고 이미지를 읽고 있습니다.");
-  await loadBaseModel();
+      <section id="trainView" class="view">
+        <div class="view-header">
+          <p class="step">TRAINING STATUS</p>
+          <h3>학습 상태 확인</h3>
+          <span>자동 학습 진행 상황과 로그를 확인합니다.</span>
+        </div>
 
-  const samples = await buildTrainingData(zipFiles);
-  if (samples.length < 4) throw new Error("학습 가능한 이미지가 너무 적습니다. ZIP 파일명과 내부 이미지를 확인하세요.");
+        <div class="train-grid">
+          <div class="panel">
+            <div class="panel-title">
+              <h4>학습 진행률</h4>
+              <p>ZIP 파일을 압축 해제하고 브라우저에서 학습합니다.</p>
+            </div>
 
-  classNames = [...new Set(samples.map(s => makeClassName(s.materialClass, s.contaminationClass)))].sort();
-  if (classNames.length < 2) throw new Error("최소 2개 이상의 클래스가 필요합니다. 예: 종이 오염0, 종이 오염x");
+            <div class="progress-wrap">
+              <div>
+                <span>진행률</span>
+                <strong id="progressText">0%</strong>
+              </div>
+              <div class="progress-outer">
+                <div id="progressBar" class="progress-inner"></div>
+              </div>
+              <progress id="trainProgress" value="0" max="100"></progress>
+            </div>
 
-  log(`학습 클래스: ${classNames.join(", ")}`);
-  setStatus("이미지 특징을 추출하는 중", `${samples.length}장의 이미지를 모델이 학습할 형태로 변환합니다.`);
+            <div class="button-row">
+              <button id="trainManifestBtn" class="secondary-action">다시 자동 학습</button>
+              <button id="clearModelBtn" class="danger-action">저장 모델 초기화</button>
+            </div>
+          </div>
 
-  const xs = [];
-  const ys = [];
-  for (let i = 0; i < samples.length; i++) {
-    const img = await fileToImage(samples[i].blob);
-    const embedding = getEmbedding(img);
-    xs.push(await embedding.array());
-    embedding.dispose();
-    ys.push(classNames.indexOf(makeClassName(samples[i].materialClass, samples[i].contaminationClass)));
-    if (i % 3 === 0) setProgress(8 + (i / samples.length) * 46);
-    await tf.nextFrame();
-  }
+          <div class="panel">
+            <div class="panel-title">
+              <h4>학습 로그</h4>
+              <p>문제가 생기면 이 로그를 확인하세요.</p>
+            </div>
 
-  const xTensor = tf.tensor2d(xs);
-  const yTensor = tf.oneHot(tf.tensor1d(ys, "int32"), classNames.length);
+            <pre id="trainLog" class="log-box">학습 로그가 여기에 표시됩니다.</pre>
 
-  classifierModel = tf.sequential();
-  classifierModel.add(tf.layers.dense({ inputShape: [xTensor.shape[1]], units: 128, activation: "relu" }));
-  classifierModel.add(tf.layers.dropout({ rate: 0.2 }));
-  classifierModel.add(tf.layers.dense({ units: classNames.length, activation: "softmax" }));
-  classifierModel.compile({ optimizer: tf.train.adam(0.001), loss: "categoricalCrossentropy", metrics: ["accuracy"] });
+            <input id="zipInput" type="file" multiple accept=".zip" hidden />
+            <button id="trainSelectedBtn" hidden></button>
+            <button id="retrainBtn" hidden></button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
-  setStatus("모델을 학습하는 중", "잠시만 기다려 주세요. 학습 완료 후 바로 분석할 수 있습니다.");
-  await classifierModel.fit(xTensor, yTensor, {
-    epochs: 25,
-    batchSize: Math.min(16, samples.length),
-    shuffle: true,
-    callbacks: {
-      onEpochEnd: async (epoch, logs) => {
-        const acc = logs.acc ?? logs.accuracy ?? 0;
-        log(`학습 ${epoch + 1}/25 - 정확도 ${(acc * 100).toFixed(1)}%`);
-        setProgress(56 + ((epoch + 1) / 25) * 38);
-        await tf.nextFrame();
-      }
-    }
-  });
-
-  xTensor.dispose();
-  yTensor.dispose();
-  await classifierModel.save(MODEL_KEY);
-  localStorage.setItem("recycle-class-names-v2", JSON.stringify(classNames));
-  setProgress(100);
-  setStatus("분석 준비 완료", "이미지 업로드 또는 카메라 촬영으로 바로 분석할 수 있습니다.", "ready");
-  log("학습 완료. 모델이 브라우저에 저장되었습니다.");
-}
-
-async function loadSavedModel() {
-  try {
-    await loadBaseModel();
-    classifierModel = await tf.loadLayersModel(MODEL_KEY + "/model.json");
-    classNames = JSON.parse(localStorage.getItem("recycle-class-names-v2") || "[]");
-    if (classNames.length) {
-      setProgress(100);
-      setStatus("분석 준비 완료", "저장된 모델을 불러왔습니다.", "ready");
-      log("저장된 학습 모델을 불러왔습니다.");
-      return true;
-    }
-    return false;
-  } catch (err) {
-    log("저장된 모델이 없습니다. 자동 학습을 시작합니다.");
-    return false;
-  }
-}
-
-async function autoTrainModelOnStart() {
-  try {
-    setStatus("자동 학습 시작", "저장소의 ZIP 데이터를 불러오고 있습니다.");
-    const files = await loadZipFilesFromManifest();
-    await trainFromZipFiles(files);
-  } catch (err) {
-    setProgress(0);
-    setStatus("자동 학습 실패", err.message, "error");
-    log(`오류: ${err.message}`);
-  }
-}
-
-function drawImageToCanvas(img, canvas, emptyEl) {
-  const maxWidth = 980;
-  const scale = Math.min(1, maxWidth / img.width);
-  canvas.width = Math.round(img.width * scale);
-  canvas.height = Math.round(img.height * scale);
-  canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-  canvas.style.display = "block";
-  if (emptyEl) emptyEl.style.display = "none";
-}
-
-async function predictImage(imageElement, resultEl) {
-  if (!classifierModel || !classNames.length) {
-    resultEl.innerHTML = `<div class="empty-result"><b>모델 학습 중입니다</b><small>왼쪽 상태가 '분석 준비 완료'가 된 뒤 다시 시도하세요.</small></div>`;
-    return;
-  }
-  if (!imageElement) {
-    resultEl.innerHTML = `<div class="empty-result"><b>이미지가 없습니다</b><small>분석할 이미지를 먼저 선택하거나 촬영하세요.</small></div>`;
-    return;
-  }
-
-  const embedding = getEmbedding(imageElement);
-  const pred = classifierModel.predict(embedding.expandDims(0));
-  const probs = await pred.data();
-  embedding.dispose();
-  pred.dispose();
-
-  let topIndex = 0;
-  for (let i = 1; i < probs.length; i++) if (probs[i] > probs[topIndex]) topIndex = i;
-
-  const confidence = probs[topIndex];
-  const { materialClass, contaminationClass } = parseClassName(classNames[topIndex]);
-  const materialKor = MATERIAL_LABELS_KOR[materialClass] || materialClass;
-  const contaminationKor = CONTAMINATION_LABELS_KOR[contaminationClass] || contaminationClass;
-  const disposal = contaminationClass === "dirty" ? `세척 필요 / ${materialKor}류` : `정상 배출 / ${materialKor}류`;
-  const advice = contaminationClass === "dirty"
-    ? `오염이 감지되었습니다. 내용물을 비우고 물로 헹군 뒤 ${materialKor}류로 배출하세요.`
-    : `깨끗한 ${materialKor}로 판단됩니다. 알맞은 ${materialKor} 수거함에 분리배출하세요.`;
-
-  resultEl.classList.remove("empty-result");
-  resultEl.innerHTML = `
-    <div class="result-top">
-      <div class="metric"><span>재질</span><strong>${materialKor}</strong><em>${(confidence * 100).toFixed(1)}%</em></div>
-      <div class="metric"><span>오염도</span><strong>${contaminationKor}</strong><em>${contaminationClass === "dirty" ? "세척 권장" : "배출 가능"}</em></div>
-    </div>
-    <table class="result-table">
-      <thead><tr><th>번호</th><th>탐지명</th><th>재질</th><th>신뢰도</th><th>오염도</th><th>배출 방법</th></tr></thead>
-      <tbody><tr><td>1</td><td>${materialClass}</td><td>${materialKor}</td><td>${confidence.toFixed(3)}</td><td>${contaminationKor}</td><td>${disposal}</td></tr></tbody>
-    </table>
-    <div class="advice ${contaminationClass === "dirty" ? "dirty" : ""}">${advice}</div>
-  `;
-}
-
-els.navBtns.forEach(btn => {
-  btn.addEventListener("click", () => {
-    els.navBtns.forEach(b => b.classList.remove("active"));
-    els.views.forEach(v => v.classList.remove("active"));
-    btn.classList.add("active");
-    const target = document.getElementById(btn.dataset.view);
-    if (target) target.classList.add("active");
-  });
-});
-
-if (els.retrainBtn) {
-  els.retrainBtn.addEventListener("click", async () => {
-    try { await tf.io.removeModel(MODEL_KEY); } catch (_) {}
-    localStorage.removeItem("recycle-class-names-v2");
-    classifierModel = null;
-    classNames = [];
-    await autoTrainModelOnStart();
-  });
-}
-
-if (els.clearModelBtn) {
-  els.clearModelBtn.addEventListener("click", async () => {
-    try { await tf.io.removeModel(MODEL_KEY); } catch (_) {}
-    localStorage.removeItem("recycle-class-names-v2");
-    classifierModel = null;
-    classNames = [];
-    setProgress(0);
-    setStatus("저장 모델 초기화 완료", "다시 학습하려면 '데이터 다시 학습'을 누르세요.");
-    log("저장 모델을 초기화했습니다.");
-  });
-}
-
-if (els.imageInput) {
-  els.imageInput.addEventListener("change", async event => {
-    const file = event.target.files[0];
-    if (!file) return;
-    uploadImageElement = await fileToImage(file);
-    drawImageToCanvas(uploadImageElement, els.previewCanvas, els.uploadEmpty);
-  });
-}
-
-if (els.predictBtn) els.predictBtn.addEventListener("click", () => predictImage(uploadImageElement, els.result));
-
-if (els.startCameraBtn) {
-  els.startCameraBtn.addEventListener("click", async () => {
-    try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      els.cameraVideo.srcObject = cameraStream;
-    } catch (err) {
-      setStatus("카메라 접근 실패", "브라우저의 카메라 권한을 허용해 주세요.", "error");
-    }
-  });
-}
-
-if (els.captureBtn) {
-  els.captureBtn.addEventListener("click", () => {
-    const video = els.cameraVideo;
-    if (!video.videoWidth) {
-      if (els.cameraResult) els.cameraResult.innerHTML = `<div class="empty-result"><b>카메라가 켜져 있지 않습니다</b><small>카메라 켜기를 먼저 누르세요.</small></div>`;
-      return;
-    }
-    const canvas = els.cameraCanvas;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    canvas.style.display = "block";
-    if (els.cameraEmpty) els.cameraEmpty.style.display = "none";
-    const img = new Image();
-    img.onload = () => { cameraImageElement = img; };
-    img.src = canvas.toDataURL("image/jpeg");
-  });
-}
-
-if (els.cameraPredictBtn) els.cameraPredictBtn.addEventListener("click", () => predictImage(cameraImageElement, els.cameraResult));
-
-async function startApp() {
-  setProgress(0);
-  setStatus("모델 확인 중", "저장된 모델이 있으면 바로 불러옵니다.");
-  const hasModel = await loadSavedModel();
-  if (!hasModel) await autoTrainModelOnStart();
-}
-
-startApp();
+  <script src="app.js"></script>
+</body>
+</html>
