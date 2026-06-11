@@ -1,4 +1,4 @@
-const APP_VERSION = "v22";
+const APP_VERSION = "v23";
 
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
@@ -62,8 +62,8 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v22";
-const CLASS_KEY = "recycle-class-names-fast-v22";
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v23";
+const CLASS_KEY = "recycle-class-names-fast-v23";
 
 const MAX_IMAGES_PER_ZIP = 26;
 const MAX_IMAGES_PER_CLASS = 20;
@@ -852,237 +852,64 @@ function clampBox(box, width, height) {
   return { x, y, w, h };
 }
 
-function expandBox(box, width, height, ratio) {
-  const cx = box.x + box.w / 2;
-  const cy = box.y + box.h / 2;
-  const nw = box.w * ratio;
-  const nh = box.h * ratio;
-
-  return clampBox({
-    x: cx - nw / 2,
-    y: cy - nh / 2,
-    w: nw,
-    h: nh
-  }, width, height);
-}
-
-function detectObjectBoxByPixels(source) {
-  const { width, height } = getSourceSize(source);
-
-  const scanW = 180;
-  const scanH = Math.max(90, Math.round(height * (scanW / width)));
-
-  const c = document.createElement("canvas");
-  c.width = scanW;
-  c.height = scanH;
-
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, 0, 0, scanW, scanH);
-
-  const imageData = ctx.getImageData(0, 0, scanW, scanH);
-  const data = imageData.data;
-
-  const gray = new Float32Array(scanW * scanH);
-  const scoreMap = new Float32Array(scanW * scanH);
-
-  for (let y = 0; y < scanH; y++) {
-    for (let x = 0; x < scanW; x++) {
-      const idx = (y * scanW + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const sat = max - min;
-      const bright = (r + g + b) / 3;
-      const darkness = 255 - bright;
-
-      gray[y * scanW + x] = bright;
-
-      let s = 0;
-
-      if (sat > 18) s += sat * 0.75;
-      if (darkness > 45 && bright < 235) s += darkness * 0.20;
-
-      if (bright > 245) s *= 0.15;
-
-      scoreMap[y * scanW + x] = s;
-    }
-  }
-
-  for (let y = 1; y < scanH - 1; y++) {
-    for (let x = 1; x < scanW - 1; x++) {
-      const gx = Math.abs(gray[y * scanW + (x + 1)] - gray[y * scanW + (x - 1)]);
-      const gy = Math.abs(gray[(y + 1) * scanW + x] - gray[(y - 1) * scanW + x]);
-      const edge = gx + gy;
-
-      if (edge > 18) {
-        scoreMap[y * scanW + x] += edge * 0.9;
-      }
-    }
-  }
-
-  const values = Array.from(scoreMap).sort((a, b) => a - b);
-  const threshold = Math.max(28, values[Math.floor(values.length * 0.78)] || 28);
-
-  const visited = new Uint8Array(scanW * scanH);
-  const components = [];
-
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1]
-  ];
-
-  for (let sy = 0; sy < scanH; sy++) {
-    for (let sx = 0; sx < scanW; sx++) {
-      const start = sy * scanW + sx;
-
-      if (visited[start] || scoreMap[start] < threshold) continue;
-
-      const queue = [start];
-      visited[start] = 1;
-
-      let minX = sx;
-      let maxX = sx;
-      let minY = sy;
-      let maxY = sy;
-      let count = 0;
-      let scoreSum = 0;
-
-      while (queue.length) {
-        const cur = queue.pop();
-        const x = cur % scanW;
-        const y = Math.floor(cur / scanW);
-
-        count++;
-        scoreSum += scoreMap[cur];
-
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-
-        for (const [dx, dy] of dirs) {
-          const nx = x + dx;
-          const ny = y + dy;
-
-          if (nx < 0 || ny < 0 || nx >= scanW || ny >= scanH) continue;
-
-          const ni = ny * scanW + nx;
-
-          if (!visited[ni] && scoreMap[ni] >= threshold) {
-            visited[ni] = 1;
-            queue.push(ni);
-          }
-        }
-      }
-
-      if (count < 18) continue;
-
-      const bw = maxX - minX + 1;
-      const bh = maxY - minY + 1;
-      const area = bw * bh;
-      const areaRatio = area / (scanW * scanH);
-
-      if (areaRatio < 0.002 || areaRatio > 0.82) continue;
-
-      const cx = (minX + maxX) / 2 / scanW;
-      const cy = (minY + maxY) / 2 / scanH;
-      const centerDist = Math.hypot(cx - 0.5, cy - 0.5);
-
-      const objectScore =
-        scoreSum / count +
-        Math.sqrt(count) * 3 -
-        centerDist * 65;
-
-      components.push({
-        minX,
-        maxX,
-        minY,
-        maxY,
-        count,
-        score: objectScore
-      });
-    }
-  }
-
-  if (!components.length) {
-    return {
-      x: width * 0.15,
-      y: height * 0.10,
-      w: width * 0.70,
-      h: height * 0.80,
-      method: "center-fallback"
-    };
-  }
-
-  components.sort((a, b) => b.score - a.score);
-
-  const selected = components.slice(0, 3);
-  let minX = Math.min(...selected.map(cmp => cmp.minX));
-  let maxX = Math.max(...selected.map(cmp => cmp.maxX));
-  let minY = Math.min(...selected.map(cmp => cmp.minY));
-  let maxY = Math.max(...selected.map(cmp => cmp.maxY));
-
-  const padX = (maxX - minX + 1) * 0.35;
-  const padY = (maxY - minY + 1) * 0.35;
-
-  minX -= padX;
-  maxX += padX;
-  minY -= padY;
-  maxY += padY;
-
-  const scaleX = width / scanW;
-  const scaleY = height / scanH;
-
-  return clampBox({
-    x: minX * scaleX,
-    y: minY * scaleY,
-    w: (maxX - minX + 1) * scaleX,
-    h: (maxY - minY + 1) * scaleY,
-    method: "pixel-object"
-  }, width, height);
-}
-
 function generateCandidateBoxes(source) {
   const { width, height } = getSourceSize(source);
-
-  const detected = detectObjectBoxByPixels(source);
   const boxes = [];
 
   const add = box => {
     const b = clampBox(box, width, height);
+
     const duplicated = boxes.some(prev => {
       const dx = Math.abs(prev.x - b.x);
       const dy = Math.abs(prev.y - b.y);
       const dw = Math.abs(prev.w - b.w);
       const dh = Math.abs(prev.h - b.h);
-      return dx + dy + dw + dh < 30;
+      return dx + dy + dw + dh < 35;
     });
 
     if (!duplicated) boxes.push(b);
   };
 
-  add(detected);
-  add(expandBox(detected, width, height, 1.18));
-  add(expandBox(detected, width, height, 1.38));
-  add(expandBox(detected, width, height, 1.65));
+  /*
+    v23:
+    v22처럼 글자/선/그림의 픽셀 변화가 큰 곳을 물체로 잡지 않음.
+    대신 사용자가 물체를 화면 중앙에 둔다고 가정하고
+    중앙 중심 후보 영역을 여러 크기로 검사함.
+  */
 
   add({
-    x: width * 0.12,
+    x: width * 0.18,
     y: height * 0.08,
-    w: width * 0.76,
+    w: width * 0.64,
     h: height * 0.84
   });
 
   add({
-    x: width * 0.20,
-    y: height * 0.10,
-    w: width * 0.60,
-    h: height * 0.80
+    x: width * 0.12,
+    y: height * 0.06,
+    w: width * 0.76,
+    h: height * 0.88
+  });
+
+  add({
+    x: width * 0.22,
+    y: height * 0.14,
+    w: width * 0.56,
+    h: height * 0.72
+  });
+
+  add({
+    x: width * 0.28,
+    y: height * 0.18,
+    w: width * 0.44,
+    h: height * 0.64
+  });
+
+  add({
+    x: width * 0.08,
+    y: height * 0.12,
+    w: width * 0.84,
+    h: height * 0.76
   });
 
   add({
@@ -1130,6 +957,7 @@ async function findBestRegionPrediction(sourceImage) {
   const { width, height } = getSourceSize(sourceImage);
   const boxes = generateCandidateBoxes(sourceImage);
 
+  const predictions = [];
   let best = null;
 
   for (let i = 0; i < boxes.length; i++) {
@@ -1142,17 +970,28 @@ async function findBestRegionPrediction(sourceImage) {
     const centerY = (box.y + box.h / 2) / height;
     const centerDist = Math.hypot(centerX - 0.5, centerY - 0.5);
 
+    /*
+      v23:
+      단일 영역 하나만 보고 결정하지 않음.
+      여러 중앙 후보 영역의 결과를 모아서,
+      같은 재질이 반복해서 나오는지를 함께 봄.
+    */
     const score =
-      pred.confidence * 1.35 -
-      areaRatio * 0.03 -
-      centerDist * 0.025;
+      pred.confidence * 1.2 -
+      centerDist * 0.05 -
+      Math.abs(areaRatio - 0.55) * 0.03;
+
+    const item = {
+      ...pred,
+      box,
+      score,
+      areaRatio
+    };
+
+    predictions.push(item);
 
     if (!best || score > best.score) {
-      best = {
-        ...pred,
-        box,
-        score
-      };
+      best = item;
     }
 
     if (i % 2 === 0) {
@@ -1160,20 +999,52 @@ async function findBestRegionPrediction(sourceImage) {
     }
   }
 
-  if (!best) {
+  if (!predictions.length || !best) {
     return {
       materialClass: "unknown",
       contaminationClass: "uncertain",
       confidence: 0,
-      box: { x: 0, y: 0, w: width, h: height },
+      box: { x: width * 0.15, y: height * 0.10, w: width * 0.70, h: height * 0.80 },
       score: 0,
       lowConfidence: true
     };
   }
 
+  const materialScores = {};
+  const contaminationScores = {};
+
+  for (const pred of predictions) {
+    if (!materialScores[pred.materialClass]) {
+      materialScores[pred.materialClass] = 0;
+    }
+
+    if (!contaminationScores[pred.contaminationClass]) {
+      contaminationScores[pred.contaminationClass] = 0;
+    }
+
+    materialScores[pred.materialClass] += Math.max(0.05, pred.confidence);
+    contaminationScores[pred.contaminationClass] += Math.max(0.05, pred.confidence);
+  }
+
+  const materialClass = Object.entries(materialScores)
+    .sort((a, b) => b[1] - a[1])[0][0];
+
+  const contaminationClass = Object.entries(contaminationScores)
+    .sort((a, b) => b[1] - a[1])[0][0];
+
+  const sameMaterialPreds = predictions.filter(pred => pred.materialClass === materialClass);
+  const representative = sameMaterialPreds.sort((a, b) => b.score - a.score)[0] || best;
+
+  const confidenceValues = sameMaterialPreds.map(pred => pred.confidence);
+  const avgConfidence =
+    confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceValues.length);
+
   return {
-    ...best,
-    lowConfidence: best.confidence < 0.30
+    ...representative,
+    materialClass,
+    contaminationClass,
+    confidence: Math.max(representative.confidence, avgConfidence),
+    lowConfidence: Math.max(representative.confidence, avgConfidence) < 0.28
   };
 }
 
@@ -1244,10 +1115,10 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
         ? "재확인 필요"
         : `정상 배출 / ${materialKor}류`;
 
-  let advice = `📌 초록 박스는 AI가 물체로 인식한 영역입니다.`;
+  let advice = `📌 초록 박스는 AI가 분석한 후보 영역입니다.`;
 
   if (prediction.lowConfidence) {
-    advice += ` 신뢰도가 낮은 편입니다. 물체를 더 크게 찍고 배경을 단순하게 하면 정확도가 올라갑니다.`;
+    advice += ` 신뢰도가 낮은 편입니다. 재활용품을 화면 중앙에 더 크게 놓고 배경을 단순하게 하면 정확도가 올라갑니다.`;
   } else if (prediction.contaminationClass === "dirty") {
     advice += ` ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 세척한 뒤 분리배출하세요.`;
   } else {
@@ -1260,7 +1131,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
   canvasWrap.appendChild(drawAnnotatedCanvas(sourceImage, prediction));
 
   const resultSummaryHtml = `
-    <p class="result-caption">${sourceType}에서 실제 물체가 있을 가능성이 높은 영역을 먼저 찾고, 그 영역을 기준으로 분석했습니다.</p>
+    <p class="result-caption">${sourceType}의 중앙 후보 영역 여러 개를 비교하여 가장 일관된 결과를 선택했습니다.</p>
 
     <div class="result-summary">
       <div class="result-metric">
@@ -1290,7 +1161,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
       <tbody>
         <tr>
           <td>1</td>
-          <td>물체 영역 탐지 + 분류</td>
+          <td>중앙 후보 영역 비교</td>
           <td>${materialKor}</td>
           <td>${prediction.confidence.toFixed(3)}</td>
           <td>${contaminationKor}</td>
@@ -1329,7 +1200,7 @@ async function predictImage(imageElement, resultEl, sourceType = "이미지") {
     return;
   }
 
-  renderEmptyResult(resultEl, "물체 영역을 찾고 분석 중입니다. 잠시만 기다려주세요...");
+  renderEmptyResult(resultEl, "후보 영역을 비교하며 분석 중입니다. 잠시만 기다려주세요...");
   await prepareBackend();
   await loadBaseModel();
 
