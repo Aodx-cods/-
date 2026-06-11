@@ -170,7 +170,12 @@ async function loadBaseModel() {
   if (!mobilenetModel) {
     log("MobileNet 기본 모델 로딩 중...");
     setModelStatus("기본 모델 로딩 중...");
-    mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
+
+    mobilenetModel = await mobilenet.load({
+      version: 2,
+      alpha: 1.0
+    });
+
     log("MobileNet 로딩 완료");
     setModelStatus(classifierModel ? "학습 모델 준비 완료" : "기본 모델 준비 완료");
   }
@@ -448,12 +453,46 @@ async function loadSavedModel() {
     if (classNames.length) {
       log("저장된 학습 모델을 불러왔습니다.");
       setModelStatus("학습 모델 준비 완료");
-    } else {
-      setModelStatus("학습 필요");
+      return true;
     }
+
+    setModelStatus("학습 필요");
+    return false;
   } catch (err) {
     setModelStatus("학습 필요");
-    log("저장된 모델이 없습니다. 먼저 ZIP 데이터셋으로 학습하세요.");
+    log("저장된 모델이 없습니다.");
+    return false;
+  }
+}
+
+async function autoTrainModelOnStart() {
+  try {
+    setModelStatus("자동 학습 준비 중...");
+    log("자동 학습 모드 시작");
+    log("저장된 모델이 없어서 GitHub ZIP 목록으로 자동 학습을 시작합니다.");
+
+    const files = await loadZipFilesFromManifest();
+
+    if (!files.length) {
+      throw new Error("manifest.json에 ZIP 파일 목록이 없습니다.");
+    }
+
+    await trainFromZipFiles(files);
+
+    setModelStatus("자동 학습 완료");
+    log("자동 학습이 완료되었습니다. 이제 이미지 업로드 또는 카메라 분석을 사용할 수 있습니다.");
+  } catch (err) {
+    setModelStatus("자동 학습 실패");
+    log(`자동 학습 오류: ${err.message}`);
+
+    alert(
+      "자동 학습에 실패했습니다.\n\n" +
+      "확인할 것:\n" +
+      "1. manifest.json 파일이 있는지\n" +
+      "2. ZIP 파일명이 manifest.json과 정확히 같은지\n" +
+      "3. ZIP 파일 안에 이미지가 들어있는지\n\n" +
+      err.message
+    );
   }
 }
 
@@ -477,7 +516,7 @@ function drawImageToCanvas(img, canvas, emptyEl) {
 
 async function predictImage(imageElement, resultEl) {
   if (!classifierModel || !classNames.length) {
-    alert("먼저 ZIP 학습 관리에서 데이터셋을 학습하세요.");
+    alert("모델이 아직 학습되지 않았습니다. 잠시 기다리거나 ZIP 학습 관리를 확인하세요.");
     return;
   }
 
@@ -625,8 +664,9 @@ if (els.clearModelBtn) {
     classifierModel = null;
     classNames = [];
 
+    setProgress(0);
     setModelStatus("학습 필요");
-    log("저장 모델을 초기화했습니다.");
+    log("저장 모델을 초기화했습니다. 새로고침하면 자동 학습이 다시 시작됩니다.");
   });
 }
 
@@ -702,4 +742,15 @@ if (els.cameraPredictBtn) {
   });
 }
 
-loadSavedModel();
+async function startApp() {
+  setProgress(0);
+  setModelStatus("모델 확인 중...");
+
+  const hasSavedModel = await loadSavedModel();
+
+  if (!hasSavedModel) {
+    await autoTrainModelOnStart();
+  }
+}
+
+startApp();
