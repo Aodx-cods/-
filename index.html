@@ -1,72 +1,238 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <title>스마트 재활용 분류 시스템</title>
+
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
+
 <body>
-  <main class="wrap">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">GitHub Pages 전용</p>
-        <h1>♻️ 스마트 재활용 분류 시스템</h1>
-        <p>ZIP 데이터셋을 브라우저에서 압축 해제하고, 품목과 오염도를 학습한 뒤 이미지 또는 카메라로 분석합니다.</p>
+  <div class="page-bg"></div>
+
+  <header class="hero">
+    <nav class="top-nav">
+      <div class="brand">
+        <div class="brand-icon">♻️</div>
+        <div>
+          <strong>Recycle AI</strong>
+          <span>GitHub Pages Edition</span>
+        </div>
       </div>
-      <div class="badge">Python 서버 불필요</div>
-    </header>
 
-    <section class="grid">
-      <article class="card">
-        <h2>1. 학습 데이터 불러오기</h2>
-        <p class="muted">ZIP 파일명 예: <b>종이 오염o.zip</b>, <b>종이 오염x.zip</b>, <b>플라스틱 오염o.zip</b></p>
-        <label class="filebox">
-          <input id="zipInput" type="file" accept=".zip" multiple />
-          <span>내 컴퓨터에서 ZIP 여러 개 선택</span>
-        </label>
-        <button id="trainSelectedBtn">선택한 ZIP으로 학습</button>
-        <button id="trainManifestBtn" class="secondary">GitHub zips/manifest.json으로 학습</button>
-        <button id="clearModelBtn" class="danger">저장 모델 초기화</button>
-        <div id="trainLog" class="log"></div>
-        <progress id="trainProgress" value="0" max="100"></progress>
-      </article>
+      <div class="nav-pill">
+        Python 서버 없이 브라우저에서 실행
+      </div>
+    </nav>
 
-      <article class="card">
-        <h2>2. 분석할 이미지 선택</h2>
+    <section class="hero-content">
+      <div class="hero-text">
+        <div class="badge">AI 기반 재활용 분석</div>
+
+        <h1>
+          스마트 재활용<br />
+          분류 시스템
+        </h1>
+
+        <p>
+          ZIP 데이터셋을 브라우저에서 학습하고, 이미지 업로드 또는 카메라 촬영으로
+          품목과 오염도를 분석합니다.
+        </p>
+
+        <div class="hero-actions">
+          <a href="#train-section" class="primary-link">학습 시작하기</a>
+          <a href="#analyze-section" class="secondary-link">이미지 분석하기</a>
+        </div>
+      </div>
+
+      <div class="hero-card">
+        <div class="scan-box">
+          <div class="scan-line"></div>
+          <div class="recycle-mark">♻️</div>
+        </div>
+
+        <div class="mini-stats">
+          <div>
+            <span>분류</span>
+            <strong>종이 · 캔 · 비닐</strong>
+          </div>
+          <div>
+            <span>상태</span>
+            <strong>오염o / 오염x</strong>
+          </div>
+          <div>
+            <span>방식</span>
+            <strong>브라우저 AI</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+  </header>
+
+  <main class="container">
+    <section class="notice-card">
+      <div class="notice-icon">💡</div>
+      <div>
+        <strong>사용 전 안내</strong>
+        <p>
+          ZIP 파일명은 <b>종이 오염o.zip</b>, <b>종이 오염x.zip</b>,
+          <b>종이 오염0.zip</b> 같은 형식을 사용할 수 있습니다.
+          영어 o와 숫자 0 모두 오염됨으로 인식합니다.
+        </p>
+      </div>
+    </section>
+
+    <section id="train-section" class="section-grid">
+      <div class="section-title">
+        <span>STEP 01</span>
+        <h2>학습 데이터 불러오기</h2>
+        <p>
+          저장소에 올린 ZIP 파일 또는 내 컴퓨터의 ZIP 파일을 이용해
+          브라우저에서 직접 모델을 학습합니다.
+        </p>
+      </div>
+
+      <div class="panel-card">
+        <div class="card-header">
+          <div>
+            <h3>ZIP 데이터셋 학습</h3>
+            <p>품목과 오염도를 자동으로 분류하여 학습합니다.</p>
+          </div>
+          <div class="status-dot"></div>
+        </div>
+
+        <div class="upload-box">
+          <input id="zipInput" type="file" multiple accept=".zip" />
+          <div class="upload-text">
+            <strong>내 컴퓨터에서 ZIP 여러 개 선택</strong>
+            <span>예: 종이 오염o.zip, 비닐 오염x.zip</span>
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button id="trainSelectedBtn" class="btn primary">
+            선택한 ZIP으로 학습
+          </button>
+
+          <button id="trainManifestBtn" class="btn">
+            GitHub ZIP 목록으로 학습
+          </button>
+
+          <button id="clearModelBtn" class="btn danger">
+            저장 모델 초기화
+          </button>
+        </div>
+
+        <div class="progress-area">
+          <div class="progress-label">
+            <span>학습 진행률</span>
+            <span>AI Training</span>
+          </div>
+          <progress id="trainProgress" value="0" max="100"></progress>
+        </div>
+
+        <pre id="trainLog" class="log-box">학습 로그가 여기에 표시됩니다.</pre>
+      </div>
+    </section>
+
+    <section id="analyze-section" class="section-grid">
+      <div class="section-title">
+        <span>STEP 02</span>
+        <h2>이미지 분석</h2>
+        <p>
+          학습이 끝난 뒤 이미지를 업로드하거나 카메라로 촬영해서
+          재활용 품목과 오염 상태를 확인합니다.
+        </p>
+      </div>
+
+      <div class="panel-card">
+        <div class="card-header">
+          <div>
+            <h3>분석 이미지 선택</h3>
+            <p>이미지 업로드 또는 카메라 촬영을 선택하세요.</p>
+          </div>
+        </div>
+
         <div class="tabs">
           <button class="tab active" data-tab="uploadPanel">이미지 업로드</button>
           <button class="tab" data-tab="cameraPanel">카메라 촬영</button>
         </div>
 
         <div id="uploadPanel" class="panel active">
-          <label class="filebox">
+          <div class="upload-box image-upload">
             <input id="imageInput" type="file" accept="image/*" />
-            <span>분석할 이미지 선택</span>
-          </label>
-        </div>
-
-        <div id="cameraPanel" class="panel">
-          <video id="cameraVideo" autoplay playsinline></video>
-          <div class="row">
-            <button id="startCameraBtn" class="secondary">카메라 켜기</button>
-            <button id="captureBtn">촬영</button>
+            <div class="upload-text">
+              <strong>분석할 이미지 선택</strong>
+              <span>jpg, png, jpeg 이미지 사용 가능</span>
+            </div>
           </div>
         </div>
 
-        <canvas id="previewCanvas"></canvas>
-        <button id="predictBtn">🔍 분류 분석 시작</button>
-      </article>
+        <div id="cameraPanel" class="panel">
+          <div class="camera-wrap">
+            <video id="cameraVideo" autoplay playsinline></video>
+          </div>
+
+          <div class="button-row">
+            <button id="startCameraBtn" class="btn">카메라 켜기</button>
+            <button id="captureBtn" class="btn primary">촬영</button>
+          </div>
+        </div>
+
+        <div class="preview-area">
+          <canvas id="previewCanvas"></canvas>
+        </div>
+
+        <button id="predictBtn" class="btn analyze-btn">
+          🔍 분류 분석 시작
+        </button>
+
+        <div id="result" class="result empty">
+          <div class="empty-state">
+            <div>🧠</div>
+            <strong>아직 분석 결과가 없습니다</strong>
+            <span>이미지를 선택한 뒤 분석 버튼을 눌러주세요.</span>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section class="card result-card">
-      <h2>📊 인공지능 분석 리포트</h2>
-      <div id="result" class="result empty">아직 분석 결과가 없습니다.</div>
+    <section class="guide-grid">
+      <div class="guide-card">
+        <div>📦</div>
+        <h3>ZIP 이름 규칙</h3>
+        <p>
+          종이 오염o.zip, 종이 오염x.zip처럼 품목명과 오염 상태가 들어가야 합니다.
+        </p>
+      </div>
+
+      <div class="guide-card">
+        <div>🧼</div>
+        <h3>오염도 판정</h3>
+        <p>
+          오염o, 오염O, 오염0은 오염됨으로, 오염x와 오염X는 깨끗함으로 인식합니다.
+        </p>
+      </div>
+
+      <div class="guide-card">
+        <div>🌐</div>
+        <h3>GitHub Pages 전용</h3>
+        <p>
+          Python 서버 없이 HTML, JavaScript, TensorFlow.js만으로 동작합니다.
+        </p>
+      </div>
     </section>
   </main>
+
+  <footer class="footer">
+    <p>Smart Recycling AI · Browser-based Training System</p>
+  </footer>
 
   <script src="app.js"></script>
 </body>
