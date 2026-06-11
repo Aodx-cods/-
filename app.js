@@ -50,34 +50,66 @@ const MODEL_KEY = "indexeddb://recycle-classifier-v1";
 let mobilenetModel = null;
 let classifierModel = null;
 let classNames = [];
-let currentImageElement = null;
+let uploadImageElement = null;
+let cameraImageElement = null;
 let cameraStream = null;
 
 const els = {
+  navBtns: document.querySelectorAll(".nav-btn"),
+  views: document.querySelectorAll(".view"),
+
+  modelStatusText: document.getElementById("modelStatusText"),
+
   zipInput: document.getElementById("zipInput"),
   trainSelectedBtn: document.getElementById("trainSelectedBtn"),
   trainManifestBtn: document.getElementById("trainManifestBtn"),
   clearModelBtn: document.getElementById("clearModelBtn"),
   trainLog: document.getElementById("trainLog"),
   trainProgress: document.getElementById("trainProgress"),
+  progressText: document.getElementById("progressText"),
+
   imageInput: document.getElementById("imageInput"),
   previewCanvas: document.getElementById("previewCanvas"),
+  uploadEmpty: document.getElementById("uploadEmpty"),
   predictBtn: document.getElementById("predictBtn"),
   result: document.getElementById("result"),
+
   cameraVideo: document.getElementById("cameraVideo"),
+  cameraCanvas: document.getElementById("cameraCanvas"),
+  cameraEmpty: document.getElementById("cameraEmpty"),
   startCameraBtn: document.getElementById("startCameraBtn"),
-  captureBtn: document.getElementById("captureBtn")
+  captureBtn: document.getElementById("captureBtn"),
+  cameraPredictBtn: document.getElementById("cameraPredictBtn"),
+  cameraResult: document.getElementById("cameraResult")
 };
 
 function log(message) {
   if (!els.trainLog) return;
+
+  if (els.trainLog.textContent === "학습 로그가 여기에 표시됩니다.") {
+    els.trainLog.textContent = "";
+  }
+
   els.trainLog.textContent += `${message}\n`;
   els.trainLog.scrollTop = els.trainLog.scrollHeight;
 }
 
 function setProgress(value) {
-  if (!els.trainProgress) return;
-  els.trainProgress.value = Math.max(0, Math.min(100, value));
+  const safeValue = Math.max(0, Math.min(100, Math.round(value)));
+
+  if (els.trainProgress) {
+    els.trainProgress.value = safeValue;
+  }
+
+  if (els.progressText) {
+    els.progressText.textContent = `${safeValue}%`;
+  }
+}
+
+function setModelStatus(text) {
+  if (els.modelStatusText) {
+    els.modelStatusText.textContent = text;
+  }
 }
 
 function normalizeName(text) {
@@ -120,9 +152,11 @@ async function fetchFirstAvailable(paths) {
   for (const path of paths) {
     try {
       const res = await fetch(encodePath(path), { cache: "no-store" });
+
       if (res.ok) {
         return { res, path };
       }
+
       lastError = new Error(`${path} 불러오기 실패: ${res.status}`);
     } catch (err) {
       lastError = err;
@@ -135,8 +169,10 @@ async function fetchFirstAvailable(paths) {
 async function loadBaseModel() {
   if (!mobilenetModel) {
     log("MobileNet 기본 모델 로딩 중...");
+    setModelStatus("기본 모델 로딩 중...");
     mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
     log("MobileNet 로딩 완료");
+    setModelStatus(classifierModel ? "학습 모델 준비 완료" : "기본 모델 준비 완료");
   }
 }
 
@@ -180,6 +216,7 @@ async function readZipFile(file, sourceName) {
   const contaminationClass = detectClass(sourceName, CONTAMINATION_KEYWORDS, "uncertain");
 
   const samples = [];
+
   const entries = Object.values(zip.files).filter(entry => {
     return !entry.dir && isImageFile(entry.name);
   });
@@ -392,12 +429,11 @@ async function trainFromZipFiles(zipFiles) {
   xTensor.dispose();
   yTensor.dispose();
 
-  classifierModel.classNames = classNames;
-
   await classifierModel.save(MODEL_KEY);
   localStorage.setItem("recycle-class-names", JSON.stringify(classNames));
 
   setProgress(100);
+  setModelStatus("학습 모델 준비 완료");
 
   log("학습 완료. 모델이 브라우저에 저장되었습니다.");
 }
@@ -411,16 +447,19 @@ async function loadSavedModel() {
 
     if (classNames.length) {
       log("저장된 학습 모델을 불러왔습니다.");
+      setModelStatus("학습 모델 준비 완료");
+    } else {
+      setModelStatus("학습 필요");
     }
   } catch (err) {
+    setModelStatus("학습 필요");
     log("저장된 모델이 없습니다. 먼저 ZIP 데이터셋으로 학습하세요.");
   }
 }
 
-function drawImageToCanvas(img) {
-  const canvas = els.previewCanvas;
-  const maxW = 900;
-  const scale = Math.min(1, maxW / img.width);
+function drawImageToCanvas(img, canvas, emptyEl) {
+  const maxWidth = 900;
+  const scale = Math.min(1, maxWidth / img.width);
 
   canvas.width = Math.round(img.width * scale);
   canvas.height = Math.round(img.height * scale);
@@ -430,22 +469,26 @@ function drawImageToCanvas(img) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   canvas.style.display = "block";
+
+  if (emptyEl) {
+    emptyEl.style.display = "none";
+  }
 }
 
-async function predictCurrentImage() {
+async function predictImage(imageElement, resultEl) {
   if (!classifierModel || !classNames.length) {
-    alert("먼저 ZIP 데이터셋으로 학습하세요.");
+    alert("먼저 ZIP 학습 관리에서 데이터셋을 학습하세요.");
     return;
   }
 
-  if (!currentImageElement) {
+  if (!imageElement) {
     alert("분석할 이미지를 먼저 선택하거나 촬영하세요.");
     return;
   }
 
   await loadBaseModel();
 
-  const embedding = getEmbedding(currentImageElement);
+  const embedding = getEmbedding(imageElement);
   const pred = classifierModel.predict(embedding.expandDims(0));
   const probs = await pred.data();
 
@@ -467,29 +510,74 @@ async function predictCurrentImage() {
   const materialKor = MATERIAL_LABELS_KOR[materialClass] || materialClass;
   const contaminationKor = CONTAMINATION_LABELS_KOR[contaminationClass] || contaminationClass;
 
+  const disposal =
+    contaminationClass === "dirty"
+      ? `세척 필요 / ${materialKor}류`
+      : `정상 배출 / ${materialKor}류`;
+
   const advice =
     contaminationClass === "dirty"
-      ? `⚠️ ${materialKor}에 오염이 감지되었습니다. 물로 깨끗이 씻거나 이물질을 제거한 뒤 배출하세요.`
-      : `✅ 깨끗한 ${materialKor}로 판단됩니다. 알맞은 수거함에 분리배출하세요.`;
+      ? `⚠️ ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 물로 헹군 뒤 ${materialKor}류로 배출하세요.`
+      : `✅ 깨끗한 ${materialKor}로 판단됩니다. 알맞은 ${materialKor} 수거함에 분리배출하세요.`;
 
-  els.result.className = "result";
+  resultEl.innerHTML = `
+    <div class="result-summary">
+      <div class="result-metric">
+        <span>재질</span>
+        <strong>${materialKor}</strong>
+        <em>${(confidence * 100).toFixed(1)}%</em>
+      </div>
 
-  els.result.innerHTML = `
-    <div class="metric">
-      <div class="label">분류 품목</div>
-      <div class="value">${materialKor}</div>
-      <div class="conf">신뢰도 ${(confidence * 100).toFixed(1)}%</div>
+      <div class="result-metric">
+        <span>오염도</span>
+        <strong>${contaminationKor}</strong>
+        <em>브라우저 AI 기준</em>
+      </div>
     </div>
 
-    <div class="metric">
-      <div class="label">위생 상태</div>
-      <div class="value">${contaminationKor}</div>
-      <div class="conf">브라우저 학습 모델 기준</div>
-    </div>
+    <table class="result-table">
+      <thead>
+        <tr>
+          <th>번호</th>
+          <th>탐지명</th>
+          <th>재질</th>
+          <th>재질 신뢰도</th>
+          <th>오염도</th>
+          <th>배출 방법</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>${materialClass}</td>
+          <td>${materialKor}</td>
+          <td>${confidence.toFixed(3)}</td>
+          <td>${contaminationKor}</td>
+          <td>${disposal}</td>
+        </tr>
+      </tbody>
+    </table>
 
-    <div class="advice">${advice}</div>
+    <div class="advice-box ${contaminationClass === "dirty" ? "dirty" : ""}">
+      ${advice}
+    </div>
   `;
 }
+
+els.navBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    els.navBtns.forEach(item => item.classList.remove("active"));
+    els.views.forEach(view => view.classList.remove("active"));
+
+    btn.classList.add("active");
+
+    const target = document.getElementById(btn.dataset.view);
+
+    if (target) {
+      target.classList.add("active");
+    }
+  });
+});
 
 if (els.trainSelectedBtn) {
   els.trainSelectedBtn.addEventListener("click", async () => {
@@ -537,6 +625,7 @@ if (els.clearModelBtn) {
     classifierModel = null;
     classNames = [];
 
+    setModelStatus("학습 필요");
     log("저장 모델을 초기화했습니다.");
   });
 }
@@ -547,14 +636,15 @@ if (els.imageInput) {
 
     if (!file) return;
 
-    currentImageElement = await fileToImage(file);
-
-    drawImageToCanvas(currentImageElement);
+    uploadImageElement = await fileToImage(file);
+    drawImageToCanvas(uploadImageElement, els.previewCanvas, els.uploadEmpty);
   });
 }
 
 if (els.predictBtn) {
-  els.predictBtn.addEventListener("click", predictCurrentImage);
+  els.predictBtn.addEventListener("click", () => {
+    predictImage(uploadImageElement, els.result);
+  });
 }
 
 if (els.startCameraBtn) {
@@ -581,7 +671,7 @@ if (els.captureBtn) {
       return;
     }
 
-    const canvas = els.previewCanvas;
+    const canvas = els.cameraCanvas;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -592,29 +682,24 @@ if (els.captureBtn) {
 
     canvas.style.display = "block";
 
+    if (els.cameraEmpty) {
+      els.cameraEmpty.style.display = "none";
+    }
+
     const img = new Image();
 
     img.onload = () => {
-      currentImageElement = img;
+      cameraImageElement = img;
     };
 
     img.src = canvas.toDataURL("image/jpeg");
   });
 }
 
-document.querySelectorAll(".tab").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-
-    btn.classList.add("active");
-
-    const panel = document.getElementById(btn.dataset.tab);
-
-    if (panel) {
-      panel.classList.add("active");
-    }
+if (els.cameraPredictBtn) {
+  els.cameraPredictBtn.addEventListener("click", () => {
+    predictImage(cameraImageElement, els.cameraResult);
   });
-});
+}
 
 loadSavedModel();
