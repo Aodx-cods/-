@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>스마트 재활용 분류 시스템</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">GitHub Pages 전용</p>
+        <h1>♻️ 스마트 재활용 분류 시스템</h1>
+        <p>ZIP 데이터셋을 브라우저에서 압축 해제하고, 품목과 오염도를 학습한 뒤 이미지 또는 카메라로 분석합니다.</p>
+      </div>
+      <div class="badge">Python 서버 불필요</div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>1. 학습 데이터 불러오기</h2>
+        <p class="muted">ZIP 파일명 예: <b>종이 오염o.zip</b>, <b>종이 오염x.zip</b>, <b>플라스틱 오염o.zip</b></p>
+        <label class="filebox">
+          <input id="zipInput" type="file" accept=".zip" multiple />
+          <span>내 컴퓨터에서 ZIP 여러 개 선택</span>
+        </label>
+        <button id="trainSelectedBtn">선택한 ZIP으로 학습</button>
+        <button id="trainManifestBtn" class="secondary">GitHub zips/manifest.json으로 학습</button>
+        <button id="clearModelBtn" class="danger">저장 모델 초기화</button>
+        <div id="trainLog" class="log"></div>
+        <progress id="trainProgress" value="0" max="100"></progress>
+      </article>
+
+      <article class="card">
+        <h2>2. 분석할 이미지 선택</h2>
+        <div class="tabs">
+          <button class="tab active" data-tab="uploadPanel">이미지 업로드</button>
+          <button class="tab" data-tab="cameraPanel">카메라 촬영</button>
+        </div>
+
+        <div id="uploadPanel" class="panel active">
+          <label class="filebox">
+            <input id="imageInput" type="file" accept="image/*" />
+            <span>분석할 이미지 선택</span>
+          </label>
+        </div>
+
+        <div id="cameraPanel" class="panel">
+          <video id="cameraVideo" autoplay playsinline></video>
+          <div class="row">
+            <button id="startCameraBtn" class="secondary">카메라 켜기</button>
+            <button id="captureBtn">촬영</button>
+          </div>
+        </div>
+
+        <canvas id="previewCanvas"></canvas>
+        <button id="predictBtn">🔍 분류 분석 시작</button>
+      </article>
+    </section>
+
+    <section class="card result-card">
+      <h2>📊 인공지능 분석 리포트</h2>
+      <div id="result" class="result empty">아직 분석 결과가 없습니다.</div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
