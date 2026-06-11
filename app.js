@@ -54,6 +54,7 @@ const DEFAULT_ZIP_FILES = [
   "종이 오염0.zip",
   "종이 오염x.zip",
   "캔 오염o.zip",
+  "캔 오염0.zip",
   "캔 오염x.zip"
 ];
 
@@ -218,6 +219,7 @@ function makeZipNameVariants(name) {
 
   if (clean.includes("오염o")) {
     variants.add(clean.replaceAll("오염o", "오염0"));
+    variants.add(clean.replaceAll("오염o", "오염O"));
   }
 
   if (clean.includes("오염O")) {
@@ -232,6 +234,7 @@ function makeZipNameVariants(name) {
 
   if (clean.includes("오염 o")) {
     variants.add(clean.replaceAll("오염 o", "오염 0"));
+    variants.add(clean.replaceAll("오염 o", "오염 O"));
   }
 
   if (clean.includes("오염 O")) {
@@ -285,6 +288,7 @@ async function getZipNames() {
 async function loadZipFilesFromRepo() {
   const zipNames = await getZipNames();
   const files = [];
+  const skipped = [];
 
   for (let i = 0; i < zipNames.length; i++) {
     const rawName = zipNames[i];
@@ -305,17 +309,36 @@ async function loadZipFilesFromRepo() {
     candidatePaths.push(name);
 
     setProgress(8 + Math.round((i / zipNames.length) * 12));
-    setStatus("ZIP 데이터 불러오는 중...", `${cleanName} 파일을 불러오고 있습니다.`, "loading");
-    log(`ZIP 불러오는 중: ${cleanName}`);
+    setStatus("ZIP 데이터 확인 중...", `${cleanName} 파일을 확인하고 있습니다.`, "loading");
+    log(`ZIP 확인 중: ${cleanName}`);
 
-    const result = await fetchFirstAvailable(candidatePaths);
-    const blob = await result.res.blob();
+    try {
+      const result = await fetchFirstAvailable(candidatePaths);
+      const blob = await result.res.blob();
 
-    files.push(new File([blob], cleanName, { type: "application/zip" }));
+      files.push(new File([blob], cleanName, { type: "application/zip" }));
 
-    log(`  불러옴: ${result.path}`);
+      log(`  불러옴: ${result.path}`);
+    } catch (err) {
+      skipped.push(cleanName);
+      log(`  건너뜀: ${cleanName} 파일을 찾을 수 없습니다.`);
+    }
+
     await tf.nextFrame();
   }
+
+  if (skipped.length > 0) {
+    log("");
+    log("누락되어 건너뛴 ZIP 파일:");
+    skipped.forEach(name => log(`  - ${name}`));
+    log("");
+  }
+
+  if (!files.length) {
+    throw new Error("불러올 수 있는 ZIP 파일이 없습니다. 저장소에 학습용 ZIP 파일이 있는지 확인하세요.");
+  }
+
+  log(`사용 가능한 ZIP ${files.length}개로 학습을 진행합니다.`);
 
   return files;
 }
@@ -588,7 +611,7 @@ async function loadSavedModelFast() {
 async function autoTrain() {
   try {
     setProgress(6);
-    setStatus("자동 학습 시작", "ZIP 데이터를 불러오는 중입니다.", "loading");
+    setStatus("자동 학습 시작", "사용 가능한 ZIP 데이터를 불러오는 중입니다.", "loading");
 
     const files = await loadZipFilesFromRepo();
 
