@@ -42,10 +42,12 @@ const DEFAULT_ZIP_FILES = [
 ];
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
-const MODEL_KEY = "indexeddb://recycle-classifier-v3";
-const CLASS_KEY = "recycle-class-names-v3";
-const MAX_IMAGES_PER_ZIP = 55;
-const TRAIN_EPOCHS = 12;
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v1";
+const CLASS_KEY = "recycle-class-names-fast-v1";
+
+const MAX_IMAGES_PER_ZIP = 20;
+const TRAIN_EPOCHS = 6;
+const DENSE_UNITS = 64;
 
 let mobilenetModel = null;
 let classifierModel = null;
@@ -63,6 +65,8 @@ const els = {
   statusChip: $("statusChip"),
   modelStatusText: $("modelStatusText"),
   statusDesc: $("statusDesc"),
+  statusProgressBar: $("statusProgressBar"),
+  statusProgressText: $("statusProgressText"),
 
   progressBar: $("progressBar"),
   progressText: $("progressText"),
@@ -103,14 +107,35 @@ function log(message) {
 function setProgress(value) {
   const safe = Math.max(0, Math.min(100, Math.round(value)));
 
-  if (els.progressBar) els.progressBar.style.width = `${safe}%`;
-  if (els.progressText) els.progressText.textContent = `${safe}%`;
-  if (els.trainProgress) els.trainProgress.value = safe;
+  if (els.progressBar) {
+    els.progressBar.style.width = `${safe}%`;
+  }
+
+  if (els.progressText) {
+    els.progressText.textContent = `${safe}%`;
+  }
+
+  if (els.trainProgress) {
+    els.trainProgress.value = safe;
+  }
+
+  if (els.statusProgressBar) {
+    els.statusProgressBar.style.width = `${safe}%`;
+  }
+
+  if (els.statusProgressText) {
+    els.statusProgressText.textContent = `${safe}%`;
+  }
 }
 
 function setStatus(text, desc = "", type = "loading") {
-  if (els.modelStatusText) els.modelStatusText.textContent = text;
-  if (els.statusDesc) els.statusDesc.textContent = desc;
+  if (els.modelStatusText) {
+    els.modelStatusText.textContent = text;
+  }
+
+  if (els.statusDesc) {
+    els.statusDesc.textContent = desc;
+  }
 
   if (els.statusChip) {
     els.statusChip.className = `status-chip ${type}`;
@@ -167,7 +192,11 @@ async function fetchFirstAvailable(paths) {
   for (const path of paths) {
     try {
       const res = await fetch(encodePath(path), { cache: "no-store" });
-      if (res.ok) return { res, path };
+
+      if (res.ok) {
+        return { res, path };
+      }
+
       lastError = new Error(`${path} 불러오기 실패: ${res.status}`);
     } catch (err) {
       lastError = err;
@@ -197,8 +226,10 @@ async function loadZipFilesFromRepo() {
   const zipNames = await getZipNames();
   const files = [];
 
-  for (const rawName of zipNames) {
+  for (let i = 0; i < zipNames.length; i++) {
+    const rawName = zipNames[i];
     const name = String(rawName).trim();
+
     if (!name) continue;
 
     const cleanName = name.replace(/^zips\//, "");
@@ -209,6 +240,8 @@ async function loadZipFilesFromRepo() {
       name
     ];
 
+    setProgress(8 + Math.round((i / zipNames.length) * 12));
+    setStatus("ZIP 데이터 불러오는 중...", `${cleanName} 파일을 불러오고 있습니다.`, "loading");
     log(`ZIP 불러오는 중: ${cleanName}`);
 
     const result = await fetchFirstAvailable(candidatePaths);
@@ -217,6 +250,7 @@ async function loadZipFilesFromRepo() {
     files.push(new File([blob], cleanName, { type: "application/zip" }));
 
     log(`  불러옴: ${result.path}`);
+    await tf.nextFrame();
   }
 
   return files;
@@ -224,10 +258,17 @@ async function loadZipFilesFromRepo() {
 
 async function loadBaseModel() {
   if (!mobilenetModel) {
+    setProgress(20);
     setStatus("AI 엔진 준비 중...", "처음 한 번만 시간이 걸립니다.", "loading");
     log("MobileNet 로딩 중...");
-    mobilenetModel = await mobilenet.load({ version: 2, alpha: 0.5 });
+
+    mobilenetModel = await mobilenet.load({
+      version: 2,
+      alpha: 0.5
+    });
+
     log("MobileNet 로딩 완료");
+    setProgress(28);
   }
 }
 
@@ -275,7 +316,14 @@ async function readZipFile(file, sourceName) {
   });
 
   if (entries.length > MAX_IMAGES_PER_ZIP) {
-    entries = entries.slice(0, MAX_IMAGES_PER_ZIP);
+    const sampled = [];
+    const step = entries.length / MAX_IMAGES_PER_ZIP;
+
+    for (let i = 0; i < MAX_IMAGES_PER_ZIP; i++) {
+      sampled.push(entries[Math.floor(i * step)]);
+    }
+
+    entries = sampled;
   }
 
   const samples = [];
@@ -311,7 +359,12 @@ function parseClassName(className) {
 async function buildTrainingData(zipFiles) {
   const samples = [];
 
-  for (const file of zipFiles) {
+  for (let i = 0; i < zipFiles.length; i++) {
+    const file = zipFiles[i];
+
+    setProgress(30 + Math.round((i / zipFiles.length) * 15));
+    setStatus("ZIP 압축 해제 중...", `${file.name} 이미지를 읽고 있습니다.`, "loading");
+
     const zipSamples = await readZipFile(file, file.name);
 
     const materialClass = detectClass(file.name, MATERIAL_KEYWORDS, "unknown");
@@ -323,6 +376,7 @@ async function buildTrainingData(zipFiles) {
     log(`  오염도: ${CONTAMINATION_LABELS_KOR[contaminationClass] || contaminationClass}`);
 
     samples.push(...zipSamples);
+    await tf.nextFrame();
   }
 
   return samples.filter(sample => {
@@ -332,11 +386,14 @@ async function buildTrainingData(zipFiles) {
 
 async function trainFromZipFiles(zipFiles) {
   setProgress(0);
-  if (els.trainLog) els.trainLog.textContent = "";
+
+  if (els.trainLog) {
+    els.trainLog.textContent = "";
+  }
+
+  setStatus("학습 준비 중...", "데이터와 AI 엔진을 준비하고 있습니다.", "loading");
 
   await loadBaseModel();
-
-  setStatus("학습 데이터 준비 중...", "ZIP 파일을 압축 해제하고 있습니다.", "loading");
 
   const samples = await buildTrainingData(zipFiles);
 
@@ -358,7 +415,7 @@ async function trainFromZipFiles(zipFiles) {
   const xs = [];
   const ys = [];
 
-  setStatus("이미지 특징 추출 중...", "이미지에서 AI 학습용 특징을 추출하고 있습니다.", "loading");
+  setStatus("이미지 특징 추출 중...", `총 ${samples.length}장의 이미지를 분석하고 있습니다.`, "loading");
 
   for (let i = 0; i < samples.length; i++) {
     const img = await fileToImage(samples[i].blob);
@@ -373,8 +430,9 @@ async function trainFromZipFiles(zipFiles) {
 
     ys.push(classIndex);
 
-    if (i % 4 === 0) {
-      setProgress(10 + Math.round((i / samples.length) * 45));
+    if (i % 3 === 0) {
+      setProgress(45 + Math.round((i / samples.length) * 30));
+      setStatus("이미지 특징 추출 중...", `${i + 1} / ${samples.length}장 처리 중입니다.`, "loading");
       await tf.nextFrame();
     }
   }
@@ -386,11 +444,13 @@ async function trainFromZipFiles(zipFiles) {
 
   classifierModel.add(tf.layers.dense({
     inputShape: [xTensor.shape[1]],
-    units: 96,
+    units: DENSE_UNITS,
     activation: "relu"
   }));
 
-  classifierModel.add(tf.layers.dropout({ rate: 0.2 }));
+  classifierModel.add(tf.layers.dropout({
+    rate: 0.2
+  }));
 
   classifierModel.add(tf.layers.dense({
     units: classNames.length,
@@ -403,7 +463,7 @@ async function trainFromZipFiles(zipFiles) {
     metrics: ["accuracy"]
   });
 
-  setStatus("모델 학습 중...", "분류 모델을 학습하고 있습니다.", "loading");
+  setStatus("모델 학습 중...", "분류 모델을 빠르게 학습하고 있습니다.", "loading");
   log("모델 학습 시작");
 
   await classifierModel.fit(xTensor, yTensor, {
@@ -414,7 +474,10 @@ async function trainFromZipFiles(zipFiles) {
       onEpochEnd: async (epoch, logs) => {
         const acc = logs.acc ?? logs.accuracy ?? 0;
         log(`epoch ${epoch + 1}/${TRAIN_EPOCHS} - loss ${logs.loss.toFixed(4)} - acc ${(acc * 100).toFixed(1)}%`);
-        setProgress(58 + Math.round(((epoch + 1) / TRAIN_EPOCHS) * 34));
+
+        setProgress(76 + Math.round(((epoch + 1) / TRAIN_EPOCHS) * 18));
+        setStatus("모델 학습 중...", `${epoch + 1} / ${TRAIN_EPOCHS}회 학습 중입니다.`, "loading");
+
         await tf.nextFrame();
       }
     }
@@ -422,6 +485,9 @@ async function trainFromZipFiles(zipFiles) {
 
   xTensor.dispose();
   yTensor.dispose();
+
+  setProgress(96);
+  setStatus("모델 저장 중...", "학습 결과를 브라우저에 저장하고 있습니다.", "loading");
 
   await classifierModel.save(MODEL_KEY);
   localStorage.setItem(CLASS_KEY, JSON.stringify(classNames));
@@ -433,9 +499,14 @@ async function trainFromZipFiles(zipFiles) {
 
 async function loadSavedModelFast() {
   try {
+    setProgress(3);
+    setStatus("모델 확인 중...", "저장된 모델이 있는지 확인합니다.", "loading");
+
     classNames = JSON.parse(localStorage.getItem(CLASS_KEY) || "[]");
 
-    if (!classNames.length) return false;
+    if (!classNames.length) {
+      return false;
+    }
 
     classifierModel = await tf.loadLayersModel(MODEL_KEY + "/model.json");
 
@@ -451,6 +522,7 @@ async function loadSavedModelFast() {
 
 async function autoTrain() {
   try {
+    setProgress(6);
     setStatus("자동 학습 시작", "ZIP 데이터를 불러오는 중입니다.", "loading");
 
     const files = await loadZipFilesFromRepo();
@@ -478,7 +550,10 @@ function drawImageToCanvas(img, canvas, emptyEl) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   canvas.style.display = "block";
-  if (emptyEl) emptyEl.style.display = "none";
+
+  if (emptyEl) {
+    emptyEl.style.display = "none";
+  }
 }
 
 async function predictImage(imageElement, resultEl) {
@@ -504,7 +579,9 @@ async function predictImage(imageElement, resultEl) {
   let topIndex = 0;
 
   for (let i = 1; i < probs.length; i++) {
-    if (probs[i] > probs[topIndex]) topIndex = i;
+    if (probs[i] > probs[topIndex]) {
+      topIndex = i;
+    }
   }
 
   const confidence = probs[topIndex];
@@ -575,13 +652,17 @@ els.navItems.forEach(btn => {
     btn.classList.add("active");
 
     const target = $(btn.dataset.view);
-    if (target) target.classList.add("active");
+
+    if (target) {
+      target.classList.add("active");
+    }
   });
 });
 
 if (els.imageInput) {
   els.imageInput.addEventListener("change", async event => {
     const file = event.target.files[0];
+
     if (!file) return;
 
     uploadImage = await fileToImage(file);
@@ -628,7 +709,10 @@ if (els.captureBtn) {
     ctx.drawImage(video, 0, 0);
 
     canvas.style.display = "block";
-    if (els.cameraEmpty) els.cameraEmpty.style.display = "none";
+
+    if (els.cameraEmpty) {
+      els.cameraEmpty.style.display = "none";
+    }
 
     const img = new Image();
 
@@ -669,15 +753,31 @@ if (els.clearModelBtn) {
   });
 }
 
+function timeout(ms) {
+  return new Promise(resolve => {
+    setTimeout(() => resolve(false), ms);
+  });
+}
+
 async function startApp() {
-  setProgress(0);
-  setStatus("모델 확인 중...", "저장된 모델이 있는지 확인합니다.", "loading");
+  setProgress(3);
+  setStatus("모델 확인 중...", "저장된 모델이 있는지 빠르게 확인합니다.", "loading");
 
-  const hasModel = await loadSavedModelFast();
+  const hasModel = await Promise.race([
+    loadSavedModelFast(),
+    timeout(3500)
+  ]);
 
-  if (!hasModel) {
-    await autoTrain();
+  if (hasModel) {
+    setProgress(100);
+    setStatus("분석 준비 완료", "저장된 모델을 불러왔습니다.", "ready");
+    return;
   }
+
+  setProgress(8);
+  setStatus("자동 학습 시작", "저장된 모델이 없어 빠른 학습을 시작합니다.", "loading");
+
+  await autoTrain();
 }
 
 startApp();
