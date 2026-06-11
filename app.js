@@ -24,8 +24,24 @@ const MATERIAL_KEYWORDS = {
 };
 
 const CONTAMINATION_KEYWORDS = {
-  dirty: ["오염o", "오염 o", "오염O", "오염 O", "오염0", "오염 0", "오염됨", "dirty"],
-  clean: ["오염x", "오염 x", "오염X", "오염 X", "깨끗", "clean"]
+  dirty: [
+    "오염o",
+    "오염 o",
+    "오염O",
+    "오염 O",
+    "오염0",
+    "오염 0",
+    "오염됨",
+    "dirty"
+  ],
+  clean: [
+    "오염x",
+    "오염 x",
+    "오염X",
+    "오염 X",
+    "깨끗",
+    "clean"
+  ]
 };
 
 const DEFAULT_ZIP_FILES = [
@@ -37,11 +53,12 @@ const DEFAULT_ZIP_FILES = [
   "유리 오염x.zip",
   "종이 오염0.zip",
   "종이 오염x.zip",
-  "캔 오염0.zip",
+  "캔 오염o.zip",
   "캔 오염x.zip"
 ];
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
+
 const MODEL_KEY = "indexeddb://recycle-classifier-fast-v1";
 const CLASS_KEY = "recycle-class-names-fast-v1";
 
@@ -186,6 +203,45 @@ function encodePath(path) {
     .join("/");
 }
 
+function makeZipNameVariants(name) {
+  const variants = new Set();
+
+  const clean = String(name || "").trim();
+  if (!clean) return [];
+
+  variants.add(clean);
+
+  if (clean.includes("오염0")) {
+    variants.add(clean.replaceAll("오염0", "오염o"));
+    variants.add(clean.replaceAll("오염0", "오염O"));
+  }
+
+  if (clean.includes("오염o")) {
+    variants.add(clean.replaceAll("오염o", "오염0"));
+  }
+
+  if (clean.includes("오염O")) {
+    variants.add(clean.replaceAll("오염O", "오염0"));
+    variants.add(clean.replaceAll("오염O", "오염o"));
+  }
+
+  if (clean.includes("오염 0")) {
+    variants.add(clean.replaceAll("오염 0", "오염 o"));
+    variants.add(clean.replaceAll("오염 0", "오염 O"));
+  }
+
+  if (clean.includes("오염 o")) {
+    variants.add(clean.replaceAll("오염 o", "오염 0"));
+  }
+
+  if (clean.includes("오염 O")) {
+    variants.add(clean.replaceAll("오염 O", "오염 0"));
+    variants.add(clean.replaceAll("오염 O", "오염 o"));
+  }
+
+  return [...variants];
+}
+
 async function fetchFirstAvailable(paths) {
   let lastError = null;
 
@@ -208,7 +264,11 @@ async function fetchFirstAvailable(paths) {
 
 async function getZipNames() {
   try {
-    const manifestResult = await fetchFirstAvailable(["zips/manifest.json", "manifest.json"]);
+    const manifestResult = await fetchFirstAvailable([
+      "zips/manifest.json",
+      "manifest.json"
+    ]);
+
     const manifest = await manifestResult.res.json();
 
     if (Array.isArray(manifest.files) && manifest.files.length) {
@@ -233,12 +293,16 @@ async function loadZipFilesFromRepo() {
     if (!name) continue;
 
     const cleanName = name.replace(/^zips\//, "");
+    const nameVariants = makeZipNameVariants(cleanName);
 
-    const candidatePaths = [
-      `zips/${cleanName}`,
-      cleanName,
-      name
-    ];
+    const candidatePaths = [];
+
+    for (const variant of nameVariants) {
+      candidatePaths.push(`zips/${variant}`);
+      candidatePaths.push(variant);
+    }
+
+    candidatePaths.push(name);
 
     setProgress(8 + Math.round((i / zipNames.length) * 12));
     setStatus("ZIP 데이터 불러오는 중...", `${cleanName} 파일을 불러오고 있습니다.`, "loading");
@@ -473,6 +537,7 @@ async function trainFromZipFiles(zipFiles) {
     callbacks: {
       onEpochEnd: async (epoch, logs) => {
         const acc = logs.acc ?? logs.accuracy ?? 0;
+
         log(`epoch ${epoch + 1}/${TRAIN_EPOCHS} - loss ${logs.loss.toFixed(4)} - acc ${(acc * 100).toFixed(1)}%`);
 
         setProgress(76 + Math.round(((epoch + 1) / TRAIN_EPOCHS) * 18));
