@@ -1,4 +1,4 @@
-const APP_VERSION = "v21";
+const APP_VERSION = "v23";
 
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
@@ -62,13 +62,13 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v21";
-const CLASS_KEY = "recycle-class-names-fast-v21";
+const MODEL_KEY = "indexeddb://recycle-classifier-fast-v23";
+const CLASS_KEY = "recycle-class-names-fast-v23";
 
-const MAX_IMAGES_PER_ZIP = 24;
-const MAX_IMAGES_PER_CLASS = 18;
-const TRAIN_EPOCHS = 7;
-const DENSE_UNITS = 96;
+const MAX_IMAGES_PER_ZIP = 26;
+const MAX_IMAGES_PER_CLASS = 20;
+const TRAIN_EPOCHS = 8;
+const DENSE_UNITS = 112;
 
 let mobilenetModel = null;
 let classifierModel = null;
@@ -217,13 +217,13 @@ function applyVersionLabel() {
   document.title = `스마트 재활용 분류 시스템 ${APP_VERSION}`;
 
   const brandText = document.querySelector(".brand p");
-  if (brandText && !brandText.textContent.includes(APP_VERSION)) {
-    brandText.textContent = `${brandText.textContent} · ${APP_VERSION}`;
+  if (brandText) {
+    brandText.textContent = `스마트 재활용 분류 · ${APP_VERSION}`;
   }
 
   const eyebrow = document.querySelector(".eyebrow");
-  if (eyebrow && !eyebrow.textContent.includes(APP_VERSION)) {
-    eyebrow.textContent = `${eyebrow.textContent} · ${APP_VERSION}`;
+  if (eyebrow) {
+    eyebrow.textContent = `AI WASTE SORTING · ${APP_VERSION}`;
   }
 }
 
@@ -821,6 +821,13 @@ function drawImageToCanvas(img, canvas, emptyEl) {
   }
 }
 
+function getSourceSize(source) {
+  return {
+    width: source.naturalWidth || source.videoWidth || source.width,
+    height: source.naturalHeight || source.videoHeight || source.height
+  };
+}
+
 function makeCropCanvas(source, box) {
   const c = document.createElement("canvas");
   c.width = Math.max(8, Math.round(box.w));
@@ -836,34 +843,88 @@ function makeCropCanvas(source, box) {
   return c;
 }
 
-function generateCandidateBoxes(width, height) {
+function clampBox(box, width, height) {
+  const x = Math.max(0, Math.min(width - 1, Math.round(box.x)));
+  const y = Math.max(0, Math.min(height - 1, Math.round(box.y)));
+  const w = Math.max(24, Math.min(width - x, Math.round(box.w)));
+  const h = Math.max(24, Math.min(height - y, Math.round(box.h)));
+
+  return { x, y, w, h };
+}
+
+function generateCandidateBoxes(source) {
+  const { width, height } = getSourceSize(source);
   const boxes = [];
 
-  const add = (x, y, w, h) => {
-    const bx = Math.max(0, Math.round(x));
-    const by = Math.max(0, Math.round(y));
-    const bw = Math.min(width - bx, Math.round(w));
-    const bh = Math.min(height - by, Math.round(h));
+  const add = box => {
+    const b = clampBox(box, width, height);
 
-    if (bw > 24 && bh > 24) {
-      boxes.push({ x: bx, y: by, w: bw, h: bh });
-    }
+    const duplicated = boxes.some(prev => {
+      const dx = Math.abs(prev.x - b.x);
+      const dy = Math.abs(prev.y - b.y);
+      const dw = Math.abs(prev.w - b.w);
+      const dh = Math.abs(prev.h - b.h);
+      return dx + dy + dw + dh < 35;
+    });
+
+    if (!duplicated) boxes.push(b);
   };
 
-  add(0, 0, width, height);
-  add(width * 0.05, height * 0.05, width * 0.90, height * 0.90);
-  add(width * 0.15, height * 0.15, width * 0.70, height * 0.70);
-  add(width * 0.22, height * 0.12, width * 0.56, height * 0.76);
+  /*
+    v23:
+    v22처럼 글자/선/그림의 픽셀 변화가 큰 곳을 물체로 잡지 않음.
+    대신 사용자가 물체를 화면 중앙에 둔다고 가정하고
+    중앙 중심 후보 영역을 여러 크기로 검사함.
+  */
 
-  add(0, 0, width * 0.65, height * 0.65);
-  add(width * 0.35, 0, width * 0.65, height * 0.65);
-  add(0, height * 0.35, width * 0.65, height * 0.65);
-  add(width * 0.35, height * 0.35, width * 0.65, height * 0.65);
+  add({
+    x: width * 0.18,
+    y: height * 0.08,
+    w: width * 0.64,
+    h: height * 0.84
+  });
 
-  add(width * 0.10, 0, width * 0.80, height * 0.55);
-  add(width * 0.10, height * 0.45, width * 0.80, height * 0.55);
-  add(0, height * 0.10, width * 0.55, height * 0.80);
-  add(width * 0.45, height * 0.10, width * 0.55, height * 0.80);
+  add({
+    x: width * 0.12,
+    y: height * 0.06,
+    w: width * 0.76,
+    h: height * 0.88
+  });
+
+  add({
+    x: width * 0.22,
+    y: height * 0.14,
+    w: width * 0.56,
+    h: height * 0.72
+  });
+
+  add({
+    x: width * 0.28,
+    y: height * 0.18,
+    w: width * 0.44,
+    h: height * 0.64
+  });
+
+  add({
+    x: width * 0.08,
+    y: height * 0.12,
+    w: width * 0.84,
+    h: height * 0.76
+  });
+
+  add({
+    x: width * 0.05,
+    y: height * 0.05,
+    w: width * 0.90,
+    h: height * 0.90
+  });
+
+  add({
+    x: 0,
+    y: 0,
+    w: width,
+    h: height
+  });
 
   return boxes;
 }
@@ -893,10 +954,10 @@ async function predictSource(sourceCanvasOrImage) {
 }
 
 async function findBestRegionPrediction(sourceImage) {
-  const width = sourceImage.naturalWidth || sourceImage.videoWidth || sourceImage.width;
-  const height = sourceImage.naturalHeight || sourceImage.videoHeight || sourceImage.height;
+  const { width, height } = getSourceSize(sourceImage);
+  const boxes = generateCandidateBoxes(sourceImage);
 
-  const boxes = generateCandidateBoxes(width, height);
+  const predictions = [];
   let best = null;
 
   for (let i = 0; i < boxes.length; i++) {
@@ -905,48 +966,90 @@ async function findBestRegionPrediction(sourceImage) {
     const pred = await predictSource(crop);
 
     const areaRatio = (box.w * box.h) / (width * height);
+    const centerX = (box.x + box.w / 2) / width;
+    const centerY = (box.y + box.h / 2) / height;
+    const centerDist = Math.hypot(centerX - 0.5, centerY - 0.5);
 
     /*
-      v21:
-      신뢰도가 낮아도 판정불가로 강제 변경하지 않음.
-      가장 가능성 높은 결과를 표시하고,
-      낮은 신뢰도는 안내 문구로만 알려줌.
+      v23:
+      단일 영역 하나만 보고 결정하지 않음.
+      여러 중앙 후보 영역의 결과를 모아서,
+      같은 재질이 반복해서 나오는지를 함께 봄.
     */
-    const score = pred.confidence - areaRatio * 0.04;
+    const score =
+      pred.confidence * 1.2 -
+      centerDist * 0.05 -
+      Math.abs(areaRatio - 0.55) * 0.03;
+
+    const item = {
+      ...pred,
+      box,
+      score,
+      areaRatio
+    };
+
+    predictions.push(item);
 
     if (!best || score > best.score) {
-      best = {
-        ...pred,
-        box,
-        score
-      };
+      best = item;
     }
 
-    if (i % 3 === 0) {
+    if (i % 2 === 0) {
       await tf.nextFrame();
     }
   }
 
-  if (!best) {
+  if (!predictions.length || !best) {
     return {
       materialClass: "unknown",
       contaminationClass: "uncertain",
       confidence: 0,
-      box: { x: 0, y: 0, w: width, h: height },
+      box: { x: width * 0.15, y: height * 0.10, w: width * 0.70, h: height * 0.80 },
       score: 0,
       lowConfidence: true
     };
   }
 
+  const materialScores = {};
+  const contaminationScores = {};
+
+  for (const pred of predictions) {
+    if (!materialScores[pred.materialClass]) {
+      materialScores[pred.materialClass] = 0;
+    }
+
+    if (!contaminationScores[pred.contaminationClass]) {
+      contaminationScores[pred.contaminationClass] = 0;
+    }
+
+    materialScores[pred.materialClass] += Math.max(0.05, pred.confidence);
+    contaminationScores[pred.contaminationClass] += Math.max(0.05, pred.confidence);
+  }
+
+  const materialClass = Object.entries(materialScores)
+    .sort((a, b) => b[1] - a[1])[0][0];
+
+  const contaminationClass = Object.entries(contaminationScores)
+    .sort((a, b) => b[1] - a[1])[0][0];
+
+  const sameMaterialPreds = predictions.filter(pred => pred.materialClass === materialClass);
+  const representative = sameMaterialPreds.sort((a, b) => b.score - a.score)[0] || best;
+
+  const confidenceValues = sameMaterialPreds.map(pred => pred.confidence);
+  const avgConfidence =
+    confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceValues.length);
+
   return {
-    ...best,
-    lowConfidence: best.confidence < 0.35
+    ...representative,
+    materialClass,
+    contaminationClass,
+    confidence: Math.max(representative.confidence, avgConfidence),
+    lowConfidence: Math.max(representative.confidence, avgConfidence) < 0.28
   };
 }
 
 function drawAnnotatedCanvas(sourceImage, prediction) {
-  const width = sourceImage.naturalWidth || sourceImage.videoWidth || sourceImage.width;
-  const height = sourceImage.naturalHeight || sourceImage.videoHeight || sourceImage.height;
+  const { width, height } = getSourceSize(sourceImage);
 
   const canvas = document.createElement("canvas");
   const maxWidth = 900;
@@ -983,7 +1086,7 @@ function drawAnnotatedCanvas(sourceImage, prediction) {
   const textWidth = ctx.measureText(label).width;
   const labelW = textWidth + paddingX * 2;
   const labelH = Math.max(28, Math.round(canvas.width * 0.04));
-  const labelX = x;
+  const labelX = Math.min(x, canvas.width - labelW - 4);
   const labelY = Math.max(0, y - labelH - 6);
 
   ctx.fillStyle = "rgba(13, 24, 18, .88)";
@@ -1012,10 +1115,10 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
         ? "재확인 필요"
         : `정상 배출 / ${materialKor}류`;
 
-  let advice = `📌 분석한 영역을 초록 박스로 표시했습니다.`;
+  let advice = `📌 초록 박스는 AI가 분석한 후보 영역입니다.`;
 
   if (prediction.lowConfidence) {
-    advice += ` 다만 신뢰도가 낮은 편이므로 배경을 단순하게 하고 물체를 더 크게 찍으면 정확도가 올라갑니다.`;
+    advice += ` 신뢰도가 낮은 편입니다. 재활용품을 화면 중앙에 더 크게 놓고 배경을 단순하게 하면 정확도가 올라갑니다.`;
   } else if (prediction.contaminationClass === "dirty") {
     advice += ` ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 세척한 뒤 분리배출하세요.`;
   } else {
@@ -1028,7 +1131,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
   canvasWrap.appendChild(drawAnnotatedCanvas(sourceImage, prediction));
 
   const resultSummaryHtml = `
-    <p class="result-caption">${sourceType}에서 가장 가능성이 높은 영역을 자동으로 찾아 분석했습니다.</p>
+    <p class="result-caption">${sourceType}의 중앙 후보 영역 여러 개를 비교하여 가장 일관된 결과를 선택했습니다.</p>
 
     <div class="result-summary">
       <div class="result-metric">
@@ -1058,7 +1161,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
       <tbody>
         <tr>
           <td>1</td>
-          <td>영역 스캔 AI</td>
+          <td>중앙 후보 영역 비교</td>
           <td>${materialKor}</td>
           <td>${prediction.confidence.toFixed(3)}</td>
           <td>${contaminationKor}</td>
@@ -1097,7 +1200,7 @@ async function predictImage(imageElement, resultEl, sourceType = "이미지") {
     return;
   }
 
-  renderEmptyResult(resultEl, "분석 중입니다. 잠시만 기다려주세요...");
+  renderEmptyResult(resultEl, "후보 영역을 비교하며 분석 중입니다. 잠시만 기다려주세요...");
   await prepareBackend();
   await loadBaseModel();
 
