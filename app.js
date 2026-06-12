@@ -1,4 +1,4 @@
-const APP_VERSION = "v24-object-detect";
+const APP_VERSION = "v25-foreground-priority";
 
 const MATERIAL_LABELS_KOR = {
   glass: "유리",
@@ -22,28 +22,12 @@ const MATERIAL_KEYWORDS = {
   can: ["캔", "can", "알루미늄", "aluminum"],
   vinyl: ["비닐", "vinyl"],
   styrofoam: ["스티로폼", "styrofoam", "스티로폼박스"],
-  plastic: ["플라스틱", "plastic", "pet", "페트"]
+  plastic: ["플라스틱", "plastic", "pet", "페트", "페트병"]
 };
 
 const CONTAMINATION_KEYWORDS = {
-  dirty: [
-    "오염o",
-    "오염 o",
-    "오염O",
-    "오염 O",
-    "오염0",
-    "오염 0",
-    "오염됨",
-    "dirty"
-  ],
-  clean: [
-    "오염x",
-    "오염 x",
-    "오염X",
-    "오염 X",
-    "깨끗",
-    "clean"
-  ]
+  dirty: ["오염o", "오염 o", "오염O", "오염 O", "오염0", "오염 0", "오염됨", "dirty"],
+  clean: ["오염x", "오염 x", "오염X", "오염 X", "깨끗", "clean"]
 };
 
 const DEFAULT_ZIP_FILES = [
@@ -62,25 +46,13 @@ const DEFAULT_ZIP_FILES = [
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".webp"];
 
-/*
-  v24 변경점
-  - 기존 저장 모델과 충돌하지 않도록 키 변경
-  - 학습 데이터 수와 epoch를 늘려 정확도 회복
-  - 중앙 박스만 보는 방식 대신, 배경과 다른 실제 객체 후보 영역을 먼저 찾음
-*/
-const MODEL_KEY = "indexeddb://recycle-classifier-fast-v24-object-detect";
-const CLASS_KEY = "recycle-class-names-fast-v24-object-detect";
+const MODEL_KEY = "indexeddb://recycle-classifier-v25-foreground-priority";
+const CLASS_KEY = "recycle-class-names-v25-foreground-priority";
 
 const MAX_IMAGES_PER_ZIP = 80;
 const MAX_IMAGES_PER_CLASS = 60;
 const TRAIN_EPOCHS = 18;
 const DENSE_UNITS = 192;
-
-const DETECTION_CANVAS_SIZE = 192;
-const MIN_OBJECT_AREA_RATIO = 0.015;
-const MAX_OBJECT_AREA_RATIO = 0.88;
-const MIN_BOX_SIDE_RATIO = 0.08;
-const MAX_CANDIDATE_BOXES = 9;
 
 let mobilenetModel = null;
 let classifierModel = null;
@@ -133,12 +105,12 @@ function injectRuntimeStyles() {
   style.id = "runtimeDetectionStyles";
   style.textContent = `
     .detected-canvas-wrap{
-      margin: 0 0 18px 0;
-      border-radius: 18px;
-      overflow: hidden;
-      background: rgba(8,12,20,.75);
-      border: 1px solid rgba(255,255,255,.08);
-      box-shadow: 0 10px 30px rgba(0,0,0,.22);
+      margin:0 0 18px 0;
+      border-radius:18px;
+      overflow:hidden;
+      background:rgba(8,12,20,.75);
+      border:1px solid rgba(255,255,255,.08);
+      box-shadow:0 10px 30px rgba(0,0,0,.22);
     }
     .detected-canvas{
       display:block;
@@ -148,78 +120,78 @@ function injectRuntimeStyles() {
     }
     .result-summary{
       display:grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
-      margin-bottom: 18px;
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+      gap:14px;
+      margin-bottom:18px;
     }
     .result-metric{
-      background: rgba(255,255,255,.04);
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 16px;
-      padding: 16px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:16px;
+      padding:16px;
     }
     .result-metric span{
       display:block;
-      font-size: 13px;
+      font-size:13px;
       opacity:.75;
       margin-bottom:8px;
     }
     .result-metric strong{
       display:block;
-      font-size: 22px;
+      font-size:22px;
       line-height:1.25;
       margin-bottom:6px;
     }
     .result-metric em{
       font-style:normal;
-      font-size: 13px;
+      font-size:13px;
       opacity:.7;
     }
     .result-table{
       width:100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: 14px;
-      background: rgba(255,255,255,.03);
-      border: 1px solid rgba(255,255,255,.08);
-      margin-bottom: 16px;
+      border-collapse:collapse;
+      overflow:hidden;
+      border-radius:14px;
+      background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.08);
+      margin-bottom:16px;
     }
     .result-table th,
     .result-table td{
-      padding: 12px 14px;
-      border-bottom: 1px solid rgba(255,255,255,.06);
-      text-align: left;
-      font-size: 14px;
+      padding:12px 14px;
+      border-bottom:1px solid rgba(255,255,255,.06);
+      text-align:left;
+      font-size:14px;
     }
     .result-table th{
       opacity:.8;
       font-weight:600;
-      background: rgba(255,255,255,.03);
+      background:rgba(255,255,255,.03);
     }
     .advice-box{
-      padding: 14px 16px;
-      border-radius: 14px;
-      background: rgba(95, 207, 128, .12);
-      border: 1px solid rgba(95, 207, 128, .25);
+      padding:14px 16px;
+      border-radius:14px;
+      background:rgba(95,207,128,.12);
+      border:1px solid rgba(95,207,128,.25);
       line-height:1.6;
       font-size:14px;
     }
     .advice-box.dirty{
-      background: rgba(255, 180, 72, .12);
-      border: 1px solid rgba(255, 180, 72, .25);
+      background:rgba(255,180,72,.12);
+      border:1px solid rgba(255,180,72,.25);
     }
     .result-caption{
-      font-size: 13px;
-      opacity: .75;
-      margin: 0 0 12px;
+      font-size:13px;
+      opacity:.75;
+      margin:0 0 12px;
     }
     .empty-note{
-      padding: 18px;
-      border-radius: 16px;
-      background: rgba(255,255,255,.04);
-      border: 1px solid rgba(255,255,255,.08);
-      opacity: .85;
-      line-height: 1.6;
+      padding:18px;
+      border-radius:16px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.08);
+      opacity:.85;
+      line-height:1.6;
     }
   `;
   document.head.appendChild(style);
@@ -229,14 +201,10 @@ function applyVersionLabel() {
   document.title = `스마트 재활용 분류 시스템 ${APP_VERSION}`;
 
   const brandText = document.querySelector(".brand p");
-  if (brandText) {
-    brandText.textContent = `스마트 재활용 분류 · ${APP_VERSION}`;
-  }
+  if (brandText) brandText.textContent = `스마트 재활용 분류 · ${APP_VERSION}`;
 
   const eyebrow = document.querySelector(".eyebrow");
-  if (eyebrow) {
-    eyebrow.textContent = `AI WASTE SORTING · ${APP_VERSION}`;
-  }
+  if (eyebrow) eyebrow.textContent = `AI WASTE SORTING · ${APP_VERSION}`;
 }
 
 function log(message) {
@@ -267,13 +235,9 @@ function setStatus(text, desc = "", type = "loading") {
   if (els.statusChip) {
     els.statusChip.className = `status-chip ${type}`;
 
-    if (type === "ready") {
-      els.statusChip.textContent = "준비 완료";
-    } else if (type === "error") {
-      els.statusChip.textContent = "오류";
-    } else {
-      els.statusChip.textContent = "진행 중";
-    }
+    if (type === "ready") els.statusChip.textContent = "준비 완료";
+    else if (type === "error") els.statusChip.textContent = "오류";
+    else els.statusChip.textContent = "진행 중";
   }
 }
 
@@ -292,9 +256,7 @@ function detectClass(text, mapping, fallback) {
 
   for (const [className, keywords] of Object.entries(mapping)) {
     for (const keyword of keywords) {
-      if (normalized.includes(normalizeName(keyword))) {
-        return className;
-      }
+      if (normalized.includes(normalizeName(keyword))) return className;
     }
   }
 
@@ -361,9 +323,7 @@ async function fetchFirstAvailable(paths) {
     try {
       const res = await fetch(encodePath(path), { cache: "no-store" });
 
-      if (res.ok) {
-        return { res, path };
-      }
+      if (res.ok) return { res, path };
 
       lastError = new Error(`${path} 불러오기 실패: ${res.status}`);
     } catch (err) {
@@ -555,14 +515,8 @@ async function readZipFile(file, sourceName) {
   }
 
   if (entries.length > MAX_IMAGES_PER_ZIP) {
-    const sampled = [];
     const shuffled = [...entries].sort(() => Math.random() - 0.5);
-
-    for (let i = 0; i < MAX_IMAGES_PER_ZIP; i++) {
-      sampled.push(shuffled[i % shuffled.length]);
-    }
-
-    entries = sampled;
+    entries = shuffled.slice(0, MAX_IMAGES_PER_ZIP);
   }
 
   const samples = [];
@@ -654,9 +608,7 @@ async function buildTrainingData(zipFiles) {
 async function trainFromZipFiles(zipFiles) {
   setProgress(0);
 
-  if (els.trainLog) {
-    els.trainLog.textContent = "";
-  }
+  if (els.trainLog) els.trainLog.textContent = "";
 
   setStatus("학습 준비 중...", "데이터와 AI 엔진을 준비하고 있습니다.", "loading");
 
@@ -665,17 +617,13 @@ async function trainFromZipFiles(zipFiles) {
 
   const samples = await buildTrainingData(zipFiles);
 
-  if (samples.length < 8) {
-    throw new Error("학습 가능한 이미지가 너무 적습니다.");
-  }
+  if (samples.length < 8) throw new Error("학습 가능한 이미지가 너무 적습니다.");
 
   const uniqueClasses = [
     ...new Set(samples.map(sample => makeClassName(sample.materialClass, sample.contaminationClass)))
   ].sort();
 
-  if (uniqueClasses.length < 2) {
-    throw new Error("최소 2개 이상의 클래스가 필요합니다.");
-  }
+  if (uniqueClasses.length < 2) throw new Error("최소 2개 이상의 클래스가 필요합니다.");
 
   classNames = uniqueClasses;
   log(`학습 클래스: ${classNames.join(", ")}`);
@@ -699,7 +647,7 @@ async function trainFromZipFiles(zipFiles) {
 
       ys.push(classIndex);
     } catch (err) {
-      log(`  이미지 특징 추출 실패. 1장 건너뜀.`);
+      log("  이미지 특징 추출 실패. 1장 건너뜀.");
     }
 
     if (i % 3 === 0) {
@@ -725,9 +673,7 @@ async function trainFromZipFiles(zipFiles) {
     kernelRegularizer: tf.regularizers.l2({ l2: 0.0008 })
   }));
 
-  classifierModel.add(tf.layers.dropout({
-    rate: 0.28
-  }));
+  classifierModel.add(tf.layers.dropout({ rate: 0.28 }));
 
   classifierModel.add(tf.layers.dense({
     units: Math.max(48, Math.round(DENSE_UNITS / 2)),
@@ -735,9 +681,7 @@ async function trainFromZipFiles(zipFiles) {
     kernelRegularizer: tf.regularizers.l2({ l2: 0.0008 })
   }));
 
-  classifierModel.add(tf.layers.dropout({
-    rate: 0.18
-  }));
+  classifierModel.add(tf.layers.dropout({ rate: 0.18 }));
 
   classifierModel.add(tf.layers.dense({
     units: classNames.length,
@@ -819,9 +763,7 @@ async function autoTrain() {
 
     const files = await loadZipFilesFromRepo();
 
-    if (!files.length) {
-      throw new Error("불러올 ZIP 파일이 없습니다.");
-    }
+    if (!files.length) throw new Error("불러올 ZIP 파일이 없습니다.");
 
     await trainFromZipFiles(files);
   } catch (err) {
@@ -844,9 +786,7 @@ function drawImageToCanvas(img, canvas, emptyEl) {
 
   canvas.style.display = "block";
 
-  if (emptyEl) {
-    emptyEl.style.display = "none";
-  }
+  if (emptyEl) emptyEl.style.display = "none";
 }
 
 function getSourceSize(source) {
@@ -877,429 +817,321 @@ function clampBox(box, width, height) {
   const w = Math.max(24, Math.min(width - x, Math.round(box.w)));
   const h = Math.max(24, Math.min(height - y, Math.round(box.h)));
 
-  return { x, y, w, h };
-}
-
-function expandBox(box, width, height, padRatio = 0.08) {
-  const padX = box.w * padRatio;
-  const padY = box.h * padRatio;
-
-  return clampBox({
-    x: box.x - padX,
-    y: box.y - padY,
-    w: box.w + padX * 2,
-    h: box.h + padY * 2
-  }, width, height);
-}
-
-function getImageDataForDetection(source) {
-  const { width, height } = getSourceSize(source);
-
-  const scale = Math.min(
-    1,
-    DETECTION_CANVAS_SIZE / Math.max(width, height)
-  );
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
-
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
   return {
-    canvas,
-    data: imageData.data,
-    smallWidth: canvas.width,
-    smallHeight: canvas.height,
-    scaleX: width / canvas.width,
-    scaleY: height / canvas.height,
-    sourceWidth: width,
-    sourceHeight: height
+    ...box,
+    x,
+    y,
+    w,
+    h,
+    objectness: Number.isFinite(box.objectness) ? box.objectness : 0.25,
+    source: box.source || "unknown"
   };
 }
 
-function getPixel(data, width, x, y) {
-  const idx = (y * width + x) * 4;
-
-  return {
-    r: data[idx],
-    g: data[idx + 1],
-    b: data[idx + 2],
-    a: data[idx + 3]
-  };
-}
-
-function luminance(pixel) {
-  return pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114;
-}
-
-function colorDistance(a, b) {
-  const dr = a.r - b.r;
-  const dg = a.g - b.g;
-  const db = a.b - b.b;
-
-  return Math.sqrt(dr * dr + dg * dg + db * db);
-}
-
-function median(values) {
-  if (!values.length) return 0;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1] + sorted[mid]) / 2;
-  }
-
-  return sorted[mid];
-}
-
-function estimateBackgroundColor(data, width, height) {
-  const borderPixels = [];
-  const step = Math.max(1, Math.floor(Math.min(width, height) / 32));
-
-  for (let x = 0; x < width; x += step) {
-    borderPixels.push(getPixel(data, width, x, 0));
-    borderPixels.push(getPixel(data, width, x, height - 1));
-  }
-
-  for (let y = 0; y < height; y += step) {
-    borderPixels.push(getPixel(data, width, 0, y));
-    borderPixels.push(getPixel(data, width, width - 1, y));
-  }
-
-  return {
-    r: median(borderPixels.map(p => p.r)),
-    g: median(borderPixels.map(p => p.g)),
-    b: median(borderPixels.map(p => p.b)),
-    a: 255
-  };
-}
-
-function buildObjectMask(info) {
-  const {
-    data,
-    smallWidth: width,
-    smallHeight: height
-  } = info;
-
-  const bg = estimateBackgroundColor(data, width, height);
-  const bgLum = luminance(bg);
-  const diffValues = [];
-
-  for (let y = 0; y < height; y += 3) {
-    for (let x = 0; x < width; x += 3) {
-      const p = getPixel(data, width, x, y);
-      const diff = colorDistance(p, bg);
-      const lumDiff = Math.abs(luminance(p) - bgLum);
-      diffValues.push(diff * 0.75 + lumDiff * 0.25);
-    }
-  }
-
-  const baseThreshold = Math.max(24, median(diffValues) * 1.25);
-  const mask = new Uint8Array(width * height);
-
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const p = getPixel(data, width, x, y);
-      const currentLum = luminance(p);
-
-      const right = getPixel(data, width, x + 1, y);
-      const down = getPixel(data, width, x, y + 1);
-
-      const bgDiff = colorDistance(p, bg);
-      const lumDiff = Math.abs(currentLum - bgLum);
-      const edge =
-        Math.abs(currentLum - luminance(right)) +
-        Math.abs(currentLum - luminance(down));
-
-      const score = bgDiff * 0.72 + lumDiff * 0.22 + edge * 0.18;
-
-      if (score > baseThreshold) {
-        mask[y * width + x] = 1;
-      }
-    }
-  }
-
-  return smoothMask(mask, width, height);
-}
-
-function smoothMask(mask, width, height) {
-  const opened = new Uint8Array(width * height);
-  const closed = new Uint8Array(width * height);
-
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      let count = 0;
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          count += mask[(y + dy) * width + (x + dx)];
-        }
-      }
-
-      if (count >= 3) {
-        opened[y * width + x] = 1;
-      }
-    }
-  }
-
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      let count = 0;
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          count += opened[(y + dy) * width + (x + dx)];
-        }
-      }
-
-      if (count >= 2) {
-        closed[y * width + x] = 1;
-      }
-    }
-  }
-
-  return closed;
-}
-
-function findConnectedComponents(mask, width, height) {
-  const visited = new Uint8Array(width * height);
-  const components = [];
-  const queue = [];
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const startIndex = y * width + x;
-
-      if (!mask[startIndex] || visited[startIndex]) continue;
-
-      let minX = x;
-      let maxX = x;
-      let minY = y;
-      let maxY = y;
-      let area = 0;
-
-      queue.length = 0;
-      queue.push(startIndex);
-      visited[startIndex] = 1;
-
-      while (queue.length) {
-        const index = queue.shift();
-        const cx = index % width;
-        const cy = Math.floor(index / width);
-
-        area++;
-        if (cx < minX) minX = cx;
-        if (cx > maxX) maxX = cx;
-        if (cy < minY) minY = cy;
-        if (cy > maxY) maxY = cy;
-
-        const neighbors = [
-          index - 1,
-          index + 1,
-          index - width,
-          index + width
-        ];
-
-        for (const next of neighbors) {
-          if (next < 0 || next >= mask.length) continue;
-
-          const nx = next % width;
-          const ny = Math.floor(next / width);
-
-          if (Math.abs(nx - cx) + Math.abs(ny - cy) !== 1) continue;
-          if (visited[next] || !mask[next]) continue;
-
-          visited[next] = 1;
-          queue.push(next);
-        }
-      }
-
-      components.push({
-        x: minX,
-        y: minY,
-        w: maxX - minX + 1,
-        h: maxY - minY + 1,
-        area
-      });
-    }
-  }
-
-  return components;
-}
-
-function boxIou(a, b) {
+function boxIoU(a, b) {
   const ax2 = a.x + a.w;
   const ay2 = a.y + a.h;
   const bx2 = b.x + b.w;
   const by2 = b.y + b.h;
 
-  const ix1 = Math.max(a.x, b.x);
-  const iy1 = Math.max(a.y, b.y);
-  const ix2 = Math.min(ax2, bx2);
-  const iy2 = Math.min(ay2, by2);
-
-  const iw = Math.max(0, ix2 - ix1);
-  const ih = Math.max(0, iy2 - iy1);
-  const inter = iw * ih;
-
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(a.y, b.y));
+  const inter = ix * iy;
   const union = a.w * a.h + b.w * b.h - inter;
 
-  return union <= 0 ? 0 : inter / union;
+  return union > 0 ? inter / union : 0;
 }
 
-function nonMaxSuppression(boxes, limit = MAX_CANDIDATE_BOXES) {
-  const sorted = [...boxes].sort((a, b) => b.objectness - a.objectness);
-  const picked = [];
+function expandBox(box, ratio, width, height) {
+  const growX = box.w * ratio;
+  const growY = box.h * ratio;
 
-  for (const box of sorted) {
-    const duplicate = picked.some(prev => boxIou(prev, box) > 0.55);
-
-    if (!duplicate) {
-      picked.push(box);
-    }
-
-    if (picked.length >= limit) break;
-  }
-
-  return picked;
+  return clampBox({
+    ...box,
+    x: box.x - growX,
+    y: box.y - growY,
+    w: box.w + growX * 2,
+    h: box.h + growY * 2
+  }, width, height);
 }
 
-function makeFallbackCenterBoxes(width, height) {
+function getBorderTouchRatio(box, width, height) {
+  const marginX = width * 0.035;
+  const marginY = height * 0.035;
+  let touches = 0;
+
+  if (box.x <= marginX) touches++;
+  if (box.y <= marginY) touches++;
+  if (box.x + box.w >= width - marginX) touches++;
+  if (box.y + box.h >= height - marginY) touches++;
+
+  return touches / 4;
+}
+
+function getBoxCenterScore(box, width, height) {
+  const cx = (box.x + box.w / 2) / width;
+  const cy = (box.y + box.h / 2) / height;
+
+  const dist = Math.hypot(cx - 0.56, cy - 0.47);
+  return 1 - Math.min(1, dist / 0.72);
+}
+
+function getForegroundSizeScore(box, width, height) {
+  const areaRatio = (box.w * box.h) / Math.max(1, width * height);
+  const preferred = 0.24;
+
+  return 1 - Math.min(1, Math.abs(areaRatio - preferred) / preferred);
+}
+
+function isBadBackgroundLikeBox(box, width, height) {
+  const areaRatio = (box.w * box.h) / Math.max(1, width * height);
+  const borderTouch = getBorderTouchRatio(box, width, height);
+  const aspect = box.w / Math.max(1, box.h);
+
+  if (borderTouch >= 0.5 && areaRatio > 0.18) return true;
+  if (areaRatio > 0.72) return true;
+  if (aspect > 4.5 || aspect < 0.16) return true;
+
+  return false;
+}
+
+function makeForegroundFallbackBoxes(width, height) {
   const boxes = [];
 
-  const add = box => {
-    const b = clampBox(box, width, height);
+  const add = (box, objectness = 0.52, source = "foreground-fallback") => {
+    const b = clampBox({ ...box, objectness, source }, width, height);
 
-    const duplicated = boxes.some(prev => {
-      const dx = Math.abs(prev.x - b.x);
-      const dy = Math.abs(prev.y - b.y);
-      const dw = Math.abs(prev.w - b.w);
-      const dh = Math.abs(prev.h - b.h);
-      return dx + dy + dw + dh < 35;
-    });
-
-    if (!duplicated) {
-      boxes.push({
-        ...b,
-        objectness: 0.35,
-        source: "fallback"
-      });
-    }
+    const duplicated = boxes.some(prev => boxIoU(prev, b) > 0.62);
+    if (!duplicated) boxes.push(b);
   };
 
-  add({
-    x: width * 0.20,
-    y: height * 0.12,
-    w: width * 0.60,
-    h: height * 0.76
-  });
-
-  add({
-    x: width * 0.14,
-    y: height * 0.08,
-    w: width * 0.72,
-    h: height * 0.84
-  });
-
-  add({
-    x: width * 0.26,
-    y: height * 0.18,
-    w: width * 0.48,
-    h: height * 0.64
-  });
-
-  add({
-    x: width * 0.08,
-    y: height * 0.08,
-    w: width * 0.84,
-    h: height * 0.84
-  });
+  add({ x: width * 0.48, y: height * 0.14, w: width * 0.32, h: height * 0.62 }, 0.70, "right-foreground");
+  add({ x: width * 0.42, y: height * 0.10, w: width * 0.42, h: height * 0.72 }, 0.64, "right-foreground");
+  add({ x: width * 0.54, y: height * 0.07, w: width * 0.24, h: height * 0.76 }, 0.72, "vertical-bottle-candidate");
+  add({ x: width * 0.44, y: height * 0.08, w: width * 0.28, h: height * 0.74 }, 0.60, "vertical-bottle-candidate");
+  add({ x: width * 0.32, y: height * 0.13, w: width * 0.38, h: height * 0.68 }, 0.56, "center-foreground");
+  add({ x: width * 0.25, y: height * 0.10, w: width * 0.50, h: height * 0.76 }, 0.52, "center-foreground");
+  add({ x: width * 0.38, y: height * 0.06, w: width * 0.50, h: height * 0.84 }, 0.48, "wide-foreground");
 
   return boxes;
 }
 
 function generateCandidateBoxes(source) {
-  const info = getImageDataForDetection(source);
-  const {
-    smallWidth,
-    smallHeight,
-    scaleX,
-    scaleY,
-    sourceWidth,
-    sourceHeight
-  } = info;
+  const { width, height } = getSourceSize(source);
+  const boxes = [];
 
-  const mask = buildObjectMask(info);
-  const components = findConnectedComponents(mask, smallWidth, smallHeight);
+  const add = box => {
+    const b = clampBox(box, width, height);
+    const areaRatio = (b.w * b.h) / Math.max(1, width * height);
+    const aspect = b.w / Math.max(1, b.h);
 
-  const imageArea = sourceWidth * sourceHeight;
-  const candidates = [];
+    if (areaRatio < 0.012) return;
+    if (aspect < 0.16 || aspect > 5.5) return;
+    if (isBadBackgroundLikeBox(b, width, height)) return;
 
-  for (const component of components) {
-    const smallBoxArea = component.w * component.h;
-    const smallImageArea = smallWidth * smallHeight;
-    const smallBoxAreaRatio = smallBoxArea / smallImageArea;
+    const duplicated = boxes.some(prev => boxIoU(prev, b) > 0.62);
+    if (!duplicated) boxes.push(b);
+  };
 
-    if (smallBoxAreaRatio < MIN_OBJECT_AREA_RATIO) continue;
-    if (smallBoxAreaRatio > MAX_OBJECT_AREA_RATIO) continue;
+  const smallMax = 180;
+  const scale = Math.min(1, smallMax / Math.max(width, height));
+  const sw = Math.max(32, Math.round(width * scale));
+  const sh = Math.max(32, Math.round(height * scale));
 
-    const box = {
-      x: component.x * scaleX,
-      y: component.y * scaleY,
-      w: component.w * scaleX,
-      h: component.h * scaleY
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, sw, sh);
+
+  const data = ctx.getImageData(0, 0, sw, sh).data;
+  const total = sw * sh;
+  const luma = new Float32Array(total);
+  const sat = new Float32Array(total);
+
+  let borderR = 0;
+  let borderG = 0;
+  let borderB = 0;
+  let borderCount = 0;
+
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const idx = y * sw + x;
+      const di = idx * 4;
+      const r = data[di];
+      const g = data[di + 1];
+      const b = data[di + 2];
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+
+      luma[idx] = 0.299 * r + 0.587 * g + 0.114 * b;
+      sat[idx] = max - min;
+
+      if (x < 4 || y < 4 || x >= sw - 4 || y >= sh - 4) {
+        borderR += r;
+        borderG += g;
+        borderB += b;
+        borderCount++;
+      }
+    }
+  }
+
+  const bgR = borderR / Math.max(1, borderCount);
+  const bgG = borderG / Math.max(1, borderCount);
+  const bgB = borderB / Math.max(1, borderCount);
+  const rawMask = new Uint8Array(total);
+
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      const idx = y * sw + x;
+      const di = idx * 4;
+      const r = data[di];
+      const g = data[di + 1];
+      const b = data[di + 2];
+
+      const colorDiff = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
+      const edge = Math.abs(luma[idx] - luma[idx - 1]) + Math.abs(luma[idx] - luma[idx - sw]);
+      const chromaEdge = Math.abs(sat[idx] - sat[idx - 1]) + Math.abs(sat[idx] - sat[idx - sw]);
+
+      if (colorDiff > 70 || edge > 28 || chromaEdge > 22) {
+        rawMask[idx] = 1;
+      }
+    }
+  }
+
+  const mask = new Uint8Array(total);
+
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      const idx = y * sw + x;
+      let count = 0;
+
+      for (let yy = -1; yy <= 1; yy++) {
+        for (let xx = -1; xx <= 1; xx++) {
+          count += rawMask[idx + yy * sw + xx];
+        }
+      }
+
+      if (count >= 2) mask[idx] = 1;
+    }
+  }
+
+  const visited = new Uint8Array(total);
+  const components = [];
+  const queue = [];
+  const minPixels = Math.max(18, Math.round(total * 0.0022));
+
+  for (let startIdx = 0; startIdx < total; startIdx++) {
+    if (!mask[startIdx] || visited[startIdx]) continue;
+
+    let head = 0;
+    let count = 0;
+    let sumX = 0;
+    let sumY = 0;
+    let minX = sw;
+    let minY = sh;
+    let maxX = 0;
+    let maxY = 0;
+
+    queue.length = 0;
+    queue.push(startIdx);
+    visited[startIdx] = 1;
+
+    while (head < queue.length) {
+      const idx = queue[head++];
+      const x = idx % sw;
+      const y = Math.floor(idx / sw);
+
+      count++;
+      sumX += x;
+      sumY += y;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+
+      const n1 = idx - 1;
+      const n2 = idx + 1;
+      const n3 = idx - sw;
+      const n4 = idx + sw;
+
+      if (x > 0 && mask[n1] && !visited[n1]) {
+        visited[n1] = 1;
+        queue.push(n1);
+      }
+
+      if (x < sw - 1 && mask[n2] && !visited[n2]) {
+        visited[n2] = 1;
+        queue.push(n2);
+      }
+
+      if (y > 0 && mask[n3] && !visited[n3]) {
+        visited[n3] = 1;
+        queue.push(n3);
+      }
+
+      if (y < sh - 1 && mask[n4] && !visited[n4]) {
+        visited[n4] = 1;
+        queue.push(n4);
+      }
+    }
+
+    if (count < minPixels) continue;
+
+    const bw = Math.max(1, maxX - minX + 1);
+    const bh = Math.max(1, maxY - minY + 1);
+    const areaRatio = (bw * bh) / total;
+    const fillRatio = count / Math.max(1, bw * bh);
+
+    if (areaRatio < 0.006) continue;
+    if (areaRatio > 0.70) continue;
+    if (fillRatio < 0.018) continue;
+
+    const rawBox = {
+      x: minX / scale,
+      y: minY / scale,
+      w: bw / scale,
+      h: bh / scale
     };
 
-    const expanded = expandBox(box, sourceWidth, sourceHeight, 0.12);
-    const areaRatio = (expanded.w * expanded.h) / imageArea;
-    const sideRatio = Math.min(expanded.w / sourceWidth, expanded.h / sourceHeight);
-    const aspect = expanded.w / Math.max(1, expanded.h);
-    const centerX = (expanded.x + expanded.w / 2) / sourceWidth;
-    const centerY = (expanded.y + expanded.h / 2) / sourceHeight;
-    const centerDist = Math.hypot(centerX - 0.5, centerY - 0.5);
+    const expanded = expandBox(rawBox, 0.12, width, height);
+    if (isBadBackgroundLikeBox(expanded, width, height)) continue;
 
-    if (sideRatio < MIN_BOX_SIDE_RATIO) continue;
-    if (aspect > 4.5 || aspect < 0.22) continue;
+    const sizeScore = getForegroundSizeScore(expanded, width, height);
+    const centerScore = getBoxCenterScore(expanded, width, height);
+    const borderTouch = getBorderTouchRatio(expanded, width, height);
 
-    const fillRatio = component.area / Math.max(1, smallBoxArea);
-    const sizeScore = 1 - Math.min(1, Math.abs(areaRatio - 0.38) / 0.38);
-    const centerScore = 1 - Math.min(1, centerDist / 0.72);
+    const objectness = Math.max(
+      0.05,
+      Math.min(
+        1,
+        fillRatio * 0.35 +
+        sizeScore * 0.28 +
+        centerScore * 0.27 +
+        (1 - borderTouch) * 0.16
+      )
+    );
 
-    const objectness =
-      fillRatio * 0.48 +
-      sizeScore * 0.32 +
-      centerScore * 0.20;
-
-    candidates.push({
+    components.push({
       ...expanded,
       objectness,
       source: "object-mask"
     });
   }
 
-  const selected = nonMaxSuppression(candidates, MAX_CANDIDATE_BOXES);
+  components
+    .sort((a, b) => {
+      const scoreA = a.objectness + getForegroundSizeScore(a, width, height) * 0.18 + getBoxCenterScore(a, width, height) * 0.14;
+      const scoreB = b.objectness + getForegroundSizeScore(b, width, height) * 0.18 + getBoxCenterScore(b, width, height) * 0.14;
+      return scoreB - scoreA;
+    })
+    .slice(0, 10)
+    .forEach(add);
 
-  if (selected.length < 3) {
-    selected.push(...makeFallbackCenterBoxes(sourceWidth, sourceHeight));
-  }
+  makeForegroundFallbackBoxes(width, height).forEach(add);
 
-  const fullBox = {
-    x: 0,
-    y: 0,
-    w: sourceWidth,
-    h: sourceHeight,
-    objectness: 0.18,
-    source: "full-image"
-  };
-
-  selected.push(fullBox);
-
-  return nonMaxSuppression(selected, MAX_CANDIDATE_BOXES);
+  return boxes.slice(0, 12);
 }
 
 async function predictSource(sourceCanvasOrImage) {
@@ -1311,6 +1143,7 @@ async function predictSource(sourceCanvasOrImage) {
   pred.dispose();
 
   let topIndex = 0;
+
   for (let i = 1; i < probs.length; i++) {
     if (probs[i] > probs[topIndex]) topIndex = i;
   }
@@ -1338,28 +1171,28 @@ async function findBestRegionPrediction(sourceImage) {
     const crop = makeCropCanvas(sourceImage, box);
     const pred = await predictSource(crop);
 
-    const areaRatio = (box.w * box.h) / (width * height);
-    const centerX = (box.x + box.w / 2) / width;
-    const centerY = (box.y + box.h / 2) / height;
-    const centerDist = Math.hypot(centerX - 0.5, centerY - 0.5);
+    const areaRatio = (box.w * box.h) / Math.max(1, width * height);
+    const objectness = Number.isFinite(box.objectness) ? box.objectness : 0.20;
+    const borderTouch = getBorderTouchRatio(box, width, height);
+    const foregroundSizeScore = getForegroundSizeScore(box, width, height);
+    const centerScore = getBoxCenterScore(box, width, height);
 
-    /*
-      v24 점수 방식
-      - 분류 신뢰도만 믿지 않음
-      - 객체처럼 보이는 정도(objectness)를 크게 반영
-      - 화면 전체 박스나 배경으로 보이는 박스는 점수를 낮춤
-    */
-    const objectness = typeof box.objectness === "number" ? box.objectness : 0.3;
-    const fullImagePenalty = box.source === "full-image" ? 0.18 : 0;
-    const badSizePenalty = areaRatio > 0.82 ? 0.12 : 0;
+    const backgroundPenalty =
+      borderTouch * 0.28 +
+      (areaRatio > 0.55 ? 0.18 : 0);
+
+    const bottleBonus =
+      box.source === "vertical-bottle-candidate" || box.source === "right-foreground"
+        ? 0.12
+        : 0;
 
     const score =
-      pred.confidence * 0.58 +
-      objectness * 0.34 -
-      centerDist * 0.04 -
-      Math.abs(areaRatio - 0.38) * 0.04 -
-      fullImagePenalty -
-      badSizePenalty;
+      pred.confidence * 0.48 +
+      objectness * 0.26 +
+      foregroundSizeScore * 0.14 +
+      centerScore * 0.10 +
+      bottleBonus -
+      backgroundPenalty;
 
     const item = {
       ...pred,
@@ -1372,13 +1205,9 @@ async function findBestRegionPrediction(sourceImage) {
 
     predictions.push(item);
 
-    if (!best || score > best.score) {
-      best = item;
-    }
+    if (!best || score > best.score) best = item;
 
-    if (i % 2 === 0) {
-      await tf.nextFrame();
-    }
+    if (i % 2 === 0) await tf.nextFrame();
   }
 
   if (!predictions.length || !best) {
@@ -1386,54 +1215,38 @@ async function findBestRegionPrediction(sourceImage) {
       materialClass: "unknown",
       contaminationClass: "uncertain",
       confidence: 0,
-      box: { x: width * 0.15, y: height * 0.10, w: width * 0.70, h: height * 0.80 },
+      box: { x: width * 0.45, y: height * 0.10, w: width * 0.35, h: height * 0.75 },
       score: 0,
       objectness: 0,
+      source: "none",
       lowConfidence: true
     };
   }
 
-  const reliablePredictions = predictions.filter(pred => {
-    return pred.objectness >= 0.28 && pred.source !== "full-image";
-  });
-
-  const votingPredictions = reliablePredictions.length
-    ? reliablePredictions
-    : predictions;
-
   const materialScores = {};
   const contaminationScores = {};
 
-  for (const pred of votingPredictions) {
-    if (!materialScores[pred.materialClass]) {
-      materialScores[pred.materialClass] = 0;
-    }
+  for (const pred of predictions) {
+    if (!materialScores[pred.materialClass]) materialScores[pred.materialClass] = 0;
+    if (!contaminationScores[pred.contaminationClass]) contaminationScores[pred.contaminationClass] = 0;
 
-    if (!contaminationScores[pred.contaminationClass]) {
-      contaminationScores[pred.contaminationClass] = 0;
-    }
-
-    const voteWeight =
+    const weight =
       Math.max(0.04, pred.confidence) *
-      Math.max(0.25, pred.objectness);
+      (0.65 + pred.objectness * 0.75) *
+      (pred.source === "right-foreground" || pred.source === "vertical-bottle-candidate" ? 1.18 : 1);
 
-    materialScores[pred.materialClass] += voteWeight;
-    contaminationScores[pred.contaminationClass] += voteWeight;
+    materialScores[pred.materialClass] += weight;
+    contaminationScores[pred.contaminationClass] += weight;
   }
 
-  const materialClass = Object.entries(materialScores)
-    .sort((a, b) => b[1] - a[1])[0][0];
+  const materialClass = Object.entries(materialScores).sort((a, b) => b[1] - a[1])[0][0];
+  const contaminationClass = Object.entries(contaminationScores).sort((a, b) => b[1] - a[1])[0][0];
 
-  const contaminationClass = Object.entries(contaminationScores)
-    .sort((a, b) => b[1] - a[1])[0][0];
-
-  const sameMaterialPreds = votingPredictions.filter(pred => pred.materialClass === materialClass);
+  const sameMaterialPreds = predictions.filter(pred => pred.materialClass === materialClass);
   const representative = sameMaterialPreds.sort((a, b) => b.score - a.score)[0] || best;
 
-  const confidenceValues = sameMaterialPreds.map(pred => pred.confidence);
-  const avgConfidence =
-    confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceValues.length);
-
+  const confidenceValues = sameMaterialPreds.map(pred => pred.confidence * (0.75 + pred.objectness * 0.25));
+  const avgConfidence = confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceValues.length);
   const finalConfidence = Math.max(representative.confidence, avgConfidence);
 
   return {
@@ -1441,10 +1254,7 @@ async function findBestRegionPrediction(sourceImage) {
     materialClass,
     contaminationClass,
     confidence: finalConfidence,
-    lowConfidence:
-      finalConfidence < 0.32 ||
-      representative.objectness < 0.25 ||
-      representative.source === "full-image"
+    lowConfidence: finalConfidence < 0.35 || representative.objectness < 0.12
   };
 }
 
@@ -1470,11 +1280,11 @@ function drawAnnotatedCanvas(sourceImage, prediction) {
   const w = box.w * sx;
   const h = box.h * sy;
 
-  const isWeak = prediction.lowConfidence || prediction.source === "full-image";
+  const strokeColor = prediction.lowConfidence ? "#ffb448" : "#59f16d";
 
-  ctx.strokeStyle = isWeak ? "#ffb448" : "#59f16d";
+  ctx.strokeStyle = strokeColor;
   ctx.lineWidth = Math.max(3, canvas.width * 0.004);
-  ctx.shadowColor = isWeak ? "rgba(255,180,72,.35)" : "rgba(89,241,109,.35)";
+  ctx.shadowColor = prediction.lowConfidence ? "rgba(255,180,72,.35)" : "rgba(89,241,109,.35)";
   ctx.shadowBlur = 10;
   ctx.strokeRect(x, y, w, h);
   ctx.shadowBlur = 0;
@@ -1494,11 +1304,11 @@ function drawAnnotatedCanvas(sourceImage, prediction) {
   ctx.fillStyle = "rgba(13, 24, 18, .88)";
   ctx.fillRect(labelX, labelY, labelW, labelH);
 
-  ctx.strokeStyle = isWeak ? "rgba(255,180,72,.95)" : "rgba(89,241,109,.95)";
+  ctx.strokeStyle = strokeColor;
   ctx.lineWidth = 1.5;
   ctx.strokeRect(labelX, labelY, labelW, labelH);
 
-  ctx.fillStyle = isWeak ? "#ffb448" : "#59f16d";
+  ctx.fillStyle = strokeColor;
   ctx.textBaseline = "middle";
   ctx.fillText(label, labelX + paddingX, labelY + labelH / 2);
 
@@ -1512,15 +1322,15 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
 
   const disposal =
     prediction.contaminationClass === "dirty"
-      ? `세척 필요 / ${materialKor}류`
+      ? `세척 후 배출 / ${materialKor}류`
       : prediction.materialClass === "unknown"
         ? "재확인 필요"
         : `정상 배출 / ${materialKor}류`;
 
-  let advice = `📌 박스는 AI가 배경과 다른 물체 후보 영역을 먼저 찾은 뒤 분석한 영역입니다.`;
+  let advice = "📌 박스는 배경이 아니라 화면 중앙~오른쪽 전경 물체를 우선해서 찾은 영역입니다.";
 
   if (prediction.lowConfidence) {
-    advice += ` 신뢰도가 낮거나 객체 영역이 불안정합니다. 재활용품을 화면 중앙에 더 크게 놓고, 단색 배경에서 촬영하면 정확도가 올라갑니다.`;
+    advice += " 신뢰도가 낮은 편입니다. 재활용품을 화면 중앙이나 오른쪽에 더 크게 들고, 단색 배경에서 다시 촬영하면 정확도가 올라갑니다.";
   } else if (prediction.contaminationClass === "dirty") {
     advice += ` ${materialKor}에 오염이 감지되었습니다. 내용물을 비우고 세척한 뒤 분리배출하세요.`;
   } else {
@@ -1538,7 +1348,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
   canvasWrap.appendChild(drawAnnotatedCanvas(sourceImage, prediction));
 
   const resultSummaryHtml = `
-    <p class="result-caption">${sourceType}에서 배경과 다른 객체 후보 영역을 찾고, 그 영역을 중심으로 분류했습니다.</p>
+    <p class="result-caption">${sourceType}에서 배경 후보를 줄이고, 손에 든 전경 물체 후보를 우선 분석했습니다.</p>
 
     <div class="result-summary">
       <div class="result-metric">
@@ -1554,9 +1364,9 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
       </div>
 
       <div class="result-metric">
-        <span>객체 영역 점수</span>
+        <span>객체 후보 점수</span>
         <strong>${objectnessText}</strong>
-        <em>${prediction.source === "full-image" ? "전체 이미지 fallback" : "객체 후보 탐지"}</em>
+        <em>${prediction.source || "unknown"}</em>
       </div>
     </div>
 
@@ -1575,7 +1385,7 @@ function renderPredictionResult(resultEl, sourceImage, prediction, sourceType = 
       <tbody>
         <tr>
           <td>1</td>
-          <td>${prediction.source === "object-mask" ? "객체 후보 영역 탐지" : "보조 후보 영역"}</td>
+          <td>${prediction.source || "객체 후보 영역 비교"}</td>
           <td>${materialKor}</td>
           <td>${prediction.confidence.toFixed(3)}</td>
           <td>${typeof prediction.objectness === "number" ? prediction.objectness.toFixed(3) : "-"}</td>
@@ -1615,7 +1425,7 @@ async function predictImage(imageElement, resultEl, sourceType = "이미지") {
     return;
   }
 
-  renderEmptyResult(resultEl, "객체 후보 영역을 찾고 분석 중입니다. 잠시만 기다려주세요...");
+  renderEmptyResult(resultEl, "객체 후보 영역을 비교하며 분석 중입니다. 잠시만 기다려주세요...");
   await prepareBackend();
   await loadBaseModel();
 
@@ -1636,9 +1446,7 @@ els.navItems.forEach(btn => {
     btn.classList.add("active");
 
     const target = $(btn.dataset.view);
-    if (target) {
-      target.classList.add("active");
-    }
+    if (target) target.classList.add("active");
   });
 });
 
@@ -1696,17 +1504,18 @@ if (els.captureBtn) {
 
     canvas.style.display = "block";
 
-    if (els.cameraEmpty) {
-      els.cameraEmpty.style.display = "none";
-    }
+    if (els.cameraEmpty) els.cameraEmpty.style.display = "none";
 
     const img = new Image();
+
     img.onload = () => {
       cameraImage = img;
+
       if (els.cameraResult) {
         renderEmptyResult(els.cameraResult, "촬영이 완료되었습니다. 이제 분석 버튼을 눌러주세요.");
       }
     };
+
     img.src = canvas.toDataURL("image/jpeg");
   });
 }
